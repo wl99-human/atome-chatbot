@@ -1,0 +1,12 @@
+{
+  "articles": [
+    {
+      "id": 43466116960153,
+      "title": "Why did my card transaction fail?",
+      "html_url": "https://help.atome.ph/hc/en-gb/articles/43466116960153-Why-did-my-card-transaction-fail",
+      "body": "<div><p>Your card transaction may fail because of merchant restrictions, insufficient available limit, invalid card details, risk checks, or temporary network issues.</p><p>Please verify the merchant, your available limit, and your card details before trying again.</p></div>",
+      "draft": false
+    }
+  ],
+  "next_page": null
+}
