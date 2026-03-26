@@ -22,6 +22,16 @@ CORRECTION_RE = re.compile(
     r"Required correction:\s*(.+?)(?:\s+Apply this correction|\s+This correction is authoritative|$)",
     re.IGNORECASE,
 )
+ANSWER_ADDITION_RE = re.compile(
+    r"Answer addition:\s*(.+?)(?:\s+Use this answer addition|\s+Do not repeat the correction|$)",
+    re.IGNORECASE,
+)
+CORRECTION_PREFIX_RE = re.compile(
+    r"^(?:(?:please|kindly)\s+)?"
+    r"(?:(?:the\s+)?(?:answer|response|reply|bot)\s+should\s+)?"
+    r"(?:(?:also\s+)?(?:mention|include|add|state|clarify|note|say|explain))(?:\s+that)?\s+",
+    re.IGNORECASE,
+)
 HOW_TO_PREFIXES = ("how", "why", "what", "when", "where", "can", "do", "does", "is", "are")
 GENERAL_FAQ_PREFIXES = (
     "how can i",
@@ -52,10 +62,33 @@ class RuntimeService:
         )
 
     def _extract_correction_sentence(self, content: str) -> str | None:
-        match = CORRECTION_RE.search(normalize_whitespace(content))
-        if not match:
-            return None
-        return match.group(1).strip()
+        normalized_content = normalize_whitespace(content)
+        match = ANSWER_ADDITION_RE.search(normalized_content)
+        if match:
+            return self._normalize_correction_sentence(match.group(1))
+        legacy_match = CORRECTION_RE.search(normalized_content)
+        if legacy_match:
+            return self._normalize_correction_sentence(legacy_match.group(1))
+        return None
+
+    def _normalize_correction_sentence(self, text: str) -> str:
+        normalized = CORRECTION_PREFIX_RE.sub("", normalize_whitespace(text)).strip()
+        if normalized.lower().startswith("that "):
+            normalized = normalized[5:].strip()
+        if normalized and normalized[-1] not in ".!?":
+            normalized += "."
+        if normalized:
+            normalized = normalized[0].upper() + normalized[1:]
+        return normalized
+
+    def _summarize_content(self, content: str, max_chars: int = 220) -> str:
+        normalized = normalize_whitespace(content)
+        if len(normalized) <= max_chars:
+            return normalized.rstrip(". ")
+        sentence_end = normalized.rfind(". ", 0, max_chars)
+        if sentence_end > max_chars // 2:
+            return normalized[: sentence_end + 1].rstrip(". ")
+        return normalized[:max_chars].rsplit(" ", 1)[0].rstrip(". ")
 
     def get_active_agent_and_revision(self, db: Session, agent_id: str) -> tuple[Agent, AgentRevision]:
         agent = db.get(Agent, agent_id)
@@ -219,7 +252,7 @@ class RuntimeService:
                 correction_label = prioritized.index(correction_item) + 1
                 if supporting_item:
                     support_label = prioritized.index(supporting_item) + 1
-                    support_snippet = supporting_item.content[:220].rsplit(" ", 1)[0].rstrip(". ")
+                    support_snippet = self._summarize_content(supporting_item.content)
                     return (
                         f"{support_snippet}. [{support_label}] "
                         f"{correction_text.rstrip('. ')}. [{correction_label}]"

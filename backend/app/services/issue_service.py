@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -40,6 +41,12 @@ REPLAY_STOPWORDS = {
     "with",
     "you",
 }
+CORRECTION_PREFIX_RE = re.compile(
+    r"^(?:(?:please|kindly)\s+)?"
+    r"(?:(?:the\s+)?(?:answer|response|reply|bot)\s+should\s+)?"
+    r"(?:(?:also\s+)?(?:mention|include|add|state|clarify|note|say|explain))(?:\s+that)?\s+",
+    re.IGNORECASE,
+)
 
 
 class IssueService:
@@ -233,11 +240,14 @@ class IssueService:
         preferred = customer_note.strip() or "Provide a more accurate answer grounded in the verified knowledge base."
         normalized_prompt = normalize_whitespace(prompt_text)
         normalized_answer = normalize_whitespace(answer_text)
+        answer_addition = self._build_answer_addition(preferred)
         return normalize_whitespace(
             f"""
 Question: {normalized_prompt}
-Required correction: {preferred}
-Apply this correction whenever the same or a very similar question is asked again.
+Answer addition: {answer_addition}
+Use this answer addition naturally when the same or a very similar question is asked again.
+Do not repeat the correction as an instruction or mention that it came from a report.
+Customer report: {preferred}
 This correction is authoritative and should be prioritized over older incomplete answers.
 Previous incomplete answer: {normalized_answer}
 """
@@ -255,6 +265,19 @@ Previous incomplete answer: {normalized_answer}
             for token in tokenize(text)
             if token not in REPLAY_STOPWORDS and (len(token) > 2 or token.isdigit())
         }
+
+    def _build_answer_addition(self, customer_note: str) -> str:
+        normalized = normalize_whitespace(customer_note)
+        answer_addition = CORRECTION_PREFIX_RE.sub("", normalized).strip()
+        if answer_addition.lower().startswith("that "):
+            answer_addition = answer_addition[5:].strip()
+        if not answer_addition:
+            answer_addition = normalized
+        if answer_addition and answer_addition[-1] not in ".!?":
+            answer_addition += "."
+        if answer_addition:
+            answer_addition = answer_addition[0].upper() + answer_addition[1:]
+        return answer_addition
 
     def _evaluate_replay(
         self,

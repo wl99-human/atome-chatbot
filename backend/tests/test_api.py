@@ -304,6 +304,7 @@ def test_auto_fix_improves_future_faq_answers(monkeypatch) -> None:
     assert second.status_code == 200
     second_payload = second.json()
     assert "14 days" in second_payload["message"].lower()
+    assert "please mention" not in second_payload["message"].lower()
     assert any("correction:" in citation["title"].lower() for citation in second_payload["citations"])
 
 
