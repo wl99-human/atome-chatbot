@@ -222,3 +222,48 @@ def test_sync_endpoint_reports_fallback_metadata_when_live_sync_fails(monkeypatc
     assert payload["sync_mode"] == "fallback"
     assert payload["fallback_used"] is True
     assert payload["last_sync_warning"] is not None
+
+
+def test_generate_json_returns_default_when_model_json_is_not_object(monkeypatch) -> None:
+    class StubModels:
+        @staticmethod
+        def generate_content(*args, **kwargs):
+            return type("Response", (), {"text": '["not", "an", "object"]'})()
+
+    class StubClient:
+        models = StubModels()
+
+    monkeypatch.setattr(gemini_service, "client", StubClient())
+    result = gemini_service.generate_json("prompt", {"ok": True})
+    assert result == {"ok": True}
+
+
+def test_generate_agent_coerces_non_string_blueprint_fields(monkeypatch) -> None:
+    monkeypatch.setattr(
+        gemini_service,
+        "create_blueprint",
+        lambda **kwargs: {
+            "name": ["VIP", "Support"],
+            "description": {"summary": "Priority", "channel": "chat"},
+            "instructions": ["Use verified KB only.", {"note": "Escalate if unsure."}],
+            "knowledge_summary": ["Card FAQ", {"detail": "Escalation flow"}],
+            "enabled_tools": "application_status",
+        },
+    )
+
+    response = client.post(
+        "/api/meta/generate-agent",
+        data={
+            "agent_name": "Generated Agent",
+            "description": "",
+            "instructions": "Fallback instructions",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["agent"]["name"] == "VIP Support"
+    assert payload["blueprint"]["description"] == "Priority chat"
+    assert payload["blueprint"]["instructions"] == "Use verified KB only. Escalate if unsure."
+    assert payload["blueprint"]["knowledge_summary"] == "Card FAQ Escalation flow"
+    assert payload["blueprint"]["enabled_tools"] == ["application_status"]

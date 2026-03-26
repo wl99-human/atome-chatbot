@@ -52,16 +52,18 @@ class GeminiService:
                 ),
             )
             raw_text = getattr(response, "text", "") or ""
-            return json.loads(raw_text)
+            parsed = json.loads(raw_text)
+            return parsed if isinstance(parsed, dict) else default
         except Exception:
             text = self._call_model(prompt, temperature=0.1) or ""
             match = JSON_BLOCK_RE.search(text)
             if not match:
                 return default
             try:
-                return json.loads(match.group(0))
+                parsed = json.loads(match.group(0))
             except json.JSONDecodeError:
                 return default
+            return parsed if isinstance(parsed, dict) else default
 
     def answer_kb_from_context(
         self,
