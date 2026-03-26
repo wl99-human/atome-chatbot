@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.main import app  # noqa: E402
 from app.services.gemini_service import gemini_service  # noqa: E402
+from app.services.issue_service import issue_service  # noqa: E402
 from app.services.source_service import source_service  # noqa: E402
 
 
@@ -267,3 +268,90 @@ def test_generate_agent_coerces_non_string_blueprint_fields(monkeypatch) -> None
     assert payload["blueprint"]["instructions"] == "Use verified KB only. Escalate if unsure."
     assert payload["blueprint"]["knowledge_summary"] == "Card FAQ Escalation flow"
     assert payload["blueprint"]["enabled_tools"] == ["application_status"]
+
+
+def test_auto_fix_improves_future_faq_answers(monkeypatch) -> None:
+    agent_id, _ = sync_support_agent(monkeypatch)
+
+    first = client.post(
+        f"/api/chat/{agent_id}",
+        json={"message": "Why can an Atome Card transaction fail?"},
+    )
+    assert first.status_code == 200
+    first_payload = first.json()
+
+    issue = client.post(
+        "/api/issues",
+        json={
+            "agent_id": agent_id,
+            "assistant_message_id": first_payload["assistant_message_id"],
+            "customer_note": "Please mention that unsuccessful pending charges are usually reversed or refunded within 14 days.",
+        },
+    )
+    assert issue.status_code == 200
+    issue_payload = issue.json()
+
+    fixed = client.post(f"/api/issues/{issue_payload['id']}/auto-fix")
+    assert fixed.status_code == 200
+    fixed_payload = fixed.json()
+    assert fixed_payload["status"] == "archived"
+    assert fixed_payload["latest_fix_attempt"]["replay_passed"] is True
+
+    second = client.post(
+        f"/api/chat/{agent_id}",
+        json={"message": "Why can an Atome Card transaction fail?"},
+    )
+    assert second.status_code == 200
+    second_payload = second.json()
+    assert "14 days" in second_payload["message"].lower()
+    assert any("correction:" in citation["title"].lower() for citation in second_payload["citations"])
+
+
+def test_replay_keeps_deterministic_pass_when_model_judge_is_negative(monkeypatch) -> None:
+    monkeypatch.setattr(gemini_service, "client", object())
+    monkeypatch.setattr(
+        gemini_service,
+        "evaluate_replay",
+        lambda **kwargs: {"passed": False, "reason": "model judge was stricter than the deterministic check"},
+    )
+
+    passed, reason = issue_service._evaluate_replay(
+        prompt_text="Why can an Atome Card transaction fail?",
+        expected_behavior="Please mention that unsuccessful pending charges are usually reversed or refunded within 14 days.",
+        actual_answer=(
+            "An unsuccessful pending charge is usually reversed or refunded within 14 days."
+        ),
+        citations=[{"label": "[1]"}],
+        diagnosis_type="retrieval_gap",
+    )
+
+    assert passed is True
+    assert "corrected answer" in reason.lower()
+
+
+def test_answer_kb_from_context_falls_back_when_model_call_raises(monkeypatch) -> None:
+    class FailingModels:
+        @staticmethod
+        def generate_content(*args, **kwargs):
+            raise RuntimeError("quota exceeded")
+
+    class StubClient:
+        models = FailingModels()
+
+    monkeypatch.setattr(gemini_service, "client", StubClient())
+
+    answer = gemini_service.answer_kb_from_context(
+        user_message="Why can an Atome Card transaction fail?",
+        history=[],
+        context_blocks=[
+            {
+                "label": "1",
+                "title": "Correction: Why can an Atome Card transaction fail?",
+                "source_url": None,
+                "content": "Required correction: mention that unsuccessful pending charges are usually reversed or refunded within 14 days.",
+                "source_type": "correction",
+            }
+        ],
+    )
+
+    assert answer is None

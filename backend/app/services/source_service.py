@@ -280,6 +280,7 @@ class SourceService:
                 )
             )
             chunk_count += 1
+        db.flush()
         return chunk_count
 
     def sync_revision_sources(

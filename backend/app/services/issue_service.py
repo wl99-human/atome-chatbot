@@ -12,6 +12,36 @@ from app.services.source_service import ParsedDocument, source_service
 from app.utils.text import normalize_whitespace, tokenize
 
 
+REPLAY_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "answer",
+    "be",
+    "details",
+    "for",
+    "i",
+    "if",
+    "in",
+    "include",
+    "it",
+    "mention",
+    "of",
+    "or",
+    "please",
+    "respond",
+    "response",
+    "should",
+    "that",
+    "the",
+    "this",
+    "to",
+    "use",
+    "with",
+    "you",
+}
+
+
 class IssueService:
     def create_issue(self, db: Session, payload: IssueCreateRequest) -> IssueReport:
         assistant_message = db.get(Message, payload.assistant_message_id)
@@ -66,7 +96,7 @@ class IssueService:
         expected_behavior = issue.customer_note or issue.diagnosis_summary
         diagnosis_type = issue.diagnosis_type or "other"
 
-        if diagnosis_type in {"tool_routing_gap", "instruction_gap"}:
+        if diagnosis_type == "tool_routing_gap":
             patch_type = "instruction_patch"
             candidate_revision = source_service.clone_revision(
                 db,
@@ -77,7 +107,16 @@ class IssueService:
             )
         else:
             patch_type = "correction_doc"
-            candidate_revision = source_service.clone_revision(db, target_revision)
+            additional_guidelines = None
+            if diagnosis_type == "instruction_gap":
+                additional_guidelines = normalize_whitespace(
+                    f"{target_revision.additional_guidelines}\nCorrection for issue {issue.id}: {expected_behavior}"
+                )
+            candidate_revision = source_service.clone_revision(
+                db,
+                target_revision,
+                additional_guidelines=additional_guidelines,
+            )
             correction_text = self._build_correction_text(
                 prompt_text=prompt_text,
                 answer_text=answer_text,
@@ -87,12 +126,17 @@ class IssueService:
                 db,
                 candidate_revision,
                 ParsedDocument(
-                    title=f"Correction for issue {issue.id}",
+                    title=self._build_correction_title(prompt_text, issue.id),
                     content=correction_text,
                     source_type="correction",
                     source_url=None,
                     filename=f"issue-{issue.id}.txt",
                     mime_type="text/plain",
+                    payload_json={
+                        "section_name": normalize_whitespace(prompt_text)[:180] or "Issue correction",
+                        "issue_id": issue.id,
+                        "provenance": "issue_autofix",
+                    },
                 ),
             )
 
@@ -187,14 +231,30 @@ class IssueService:
 
     def _build_correction_text(self, *, prompt_text: str, answer_text: str, customer_note: str) -> str:
         preferred = customer_note.strip() or "Provide a more accurate answer grounded in the verified knowledge base."
+        normalized_prompt = normalize_whitespace(prompt_text)
+        normalized_answer = normalize_whitespace(answer_text)
         return normalize_whitespace(
             f"""
-When a customer asks: {prompt_text}
-The previous answer to avoid was: {answer_text}
-Preferred behavior: {preferred}
-Use retrieved knowledge where possible and cite the supporting documents.
+Question: {normalized_prompt}
+Required correction: {preferred}
+Apply this correction whenever the same or a very similar question is asked again.
+This correction is authoritative and should be prioritized over older incomplete answers.
+Previous incomplete answer: {normalized_answer}
 """
         )
+
+    def _build_correction_title(self, prompt_text: str, issue_id: str) -> str:
+        normalized_prompt = normalize_whitespace(prompt_text)
+        if not normalized_prompt:
+            return f"Correction for issue {issue_id}"
+        return f"Correction: {normalized_prompt}"[:500]
+
+    def _meaningful_replay_tokens(self, text: str) -> set[str]:
+        return {
+            token
+            for token in tokenize(text)
+            if token not in REPLAY_STOPWORDS and (len(token) > 2 or token.isdigit())
+        }
 
     def _evaluate_replay(
         self,
@@ -209,11 +269,17 @@ Use retrieved knowledge where possible and cite the supporting documents.
             passed = "reference" in actual_answer.lower() or "transaction" in actual_answer.lower()
             reason = "Replay expects the assistant to ask for or use the required lookup identifier."
         else:
-            expected_tokens = set(tokenize(expected_behavior)) - {"the", "and", "or", "to"}
-            actual_tokens = set(tokenize(actual_answer))
+            expected_tokens = self._meaningful_replay_tokens(expected_behavior)
+            actual_tokens = self._meaningful_replay_tokens(actual_answer)
             overlap = len(expected_tokens & actual_tokens)
-            passed = overlap >= max(2, len(expected_tokens) // 4) or bool(citations)
-            reason = "Replay checks for corrected behavior and grounded citations."
+            minimum_overlap = 1 if len(expected_tokens) <= 2 else max(2, len(expected_tokens) // 3)
+            passed = overlap >= minimum_overlap
+            if passed:
+                reason = "Replay confirmed that the corrected answer now includes the reported behavior."
+            else:
+                reason = (
+                    "The replay answer is still missing the key correction from the reported mistake."
+                )
 
         if gemini_service.enabled:
             evaluation = gemini_service.evaluate_replay(
@@ -221,8 +287,9 @@ Use retrieved knowledge where possible and cite the supporting documents.
                 expected_behavior=expected_behavior,
                 actual_answer=actual_answer,
             )
-            passed = bool(evaluation.get("passed", passed))
-            reason = evaluation.get("reason", reason)
+            passed = passed or bool(evaluation.get("passed", False))
+            if not passed:
+                reason = evaluation.get("reason", reason)
         return passed, reason
 
     def _issue_prompt_and_answer(self, db: Session, issue: IssueReport) -> tuple[str, str]:

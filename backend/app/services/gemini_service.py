@@ -32,11 +32,14 @@ class GeminiService:
     def _call_model(self, prompt: str, temperature: float = 0.2) -> str | None:
         if not self.client or types is None:
             return None
-        response = self.client.models.generate_content(
-            model=self.settings.gemini_model,
-            contents=prompt,
-            config=types.GenerateContentConfig(temperature=temperature),
-        )
+        try:
+            response = self.client.models.generate_content(
+                model=self.settings.gemini_model,
+                contents=prompt,
+                config=types.GenerateContentConfig(temperature=temperature),
+            )
+        except Exception:
+            return None
         return normalize_whitespace(getattr(response, "text", "") or "")
 
     def generate_json(self, prompt: str, default: dict[str, Any]) -> dict[str, Any]:
@@ -79,7 +82,9 @@ class GeminiService:
             f"{item['role'].upper()}: {item['content']}" for item in history[-6:]
         )
         context_text = "\n\n".join(
-            f"[{item['label']}] {item['title']}\nURL: {item.get('source_url') or 'N/A'}\n{item['content']}"
+            f"[{item['label']}|{item.get('source_type', 'kb_article')}] {item['title']}\n"
+            f"URL: {item.get('source_url') or 'N/A'}\n"
+            f"{item['content']}"
             for item in context_blocks
         )
         prompt = f"""
@@ -87,6 +92,7 @@ You are a careful customer service assistant answering a general knowledge-base 
 
 Rules:
 - Answer only from the supplied sources.
+- If a source is marked as a correction, treat it as authoritative guidance that fixes an earlier incomplete answer.
 - If the answer is not fully supported, say so clearly.
 - Use citations inline like [1] or [2].
 - Do not invent policies, timelines, or account outcomes.

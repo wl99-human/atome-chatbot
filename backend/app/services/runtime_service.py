@@ -18,6 +18,10 @@ TRANSACTION_ID_RE = re.compile(
     r"\b(?:TXN?|TRX|TRANS(?:ACTION)?)[-:# ]*[A-Z0-9]{4,}\b|\b[A-Z0-9]{8,}\b",
     re.IGNORECASE,
 )
+CORRECTION_RE = re.compile(
+    r"Required correction:\s*(.+?)(?:\s+Apply this correction|\s+This correction is authoritative|$)",
+    re.IGNORECASE,
+)
 HOW_TO_PREFIXES = ("how", "why", "what", "when", "where", "can", "do", "does", "is", "are")
 GENERAL_FAQ_PREFIXES = (
     "how can i",
@@ -41,6 +45,18 @@ class ReplyResult:
 
 
 class RuntimeService:
+    def _prioritize_retrieved(self, retrieved: list[RetrievedChunk]) -> list[RetrievedChunk]:
+        return sorted(
+            retrieved,
+            key=lambda item: (item.source_type != "correction", -item.score, item.title.lower()),
+        )
+
+    def _extract_correction_sentence(self, content: str) -> str | None:
+        match = CORRECTION_RE.search(normalize_whitespace(content))
+        if not match:
+            return None
+        return match.group(1).strip()
+
     def get_active_agent_and_revision(self, db: Session, agent_id: str) -> tuple[Agent, AgentRevision]:
         agent = db.get(Agent, agent_id)
         if not agent:
@@ -176,14 +192,16 @@ class RuntimeService:
         history: list[dict[str, str]],
         retrieved: list[RetrievedChunk],
     ) -> str:
+        prioritized = self._prioritize_retrieved(retrieved)
         context_blocks = [
             {
                 "label": str(index + 1),
                 "title": item.title,
                 "source_url": item.source_url,
                 "content": item.content,
+                "source_type": item.source_type,
             }
-            for index, item in enumerate(retrieved[:4])
+            for index, item in enumerate(prioritized[:4])
         ]
         model_answer = gemini_service.answer_kb_from_context(
             user_message=message_text,
@@ -193,8 +211,23 @@ class RuntimeService:
         if model_answer:
             return model_answer
 
+        correction_item = next((item for item in prioritized if item.source_type == "correction"), None)
+        supporting_item = next((item for item in prioritized if item.source_type != "correction"), None)
+        if correction_item:
+            correction_text = self._extract_correction_sentence(correction_item.content)
+            if correction_text:
+                correction_label = prioritized.index(correction_item) + 1
+                if supporting_item:
+                    support_label = prioritized.index(supporting_item) + 1
+                    support_snippet = supporting_item.content[:220].rsplit(" ", 1)[0].rstrip(". ")
+                    return (
+                        f"{support_snippet}. [{support_label}] "
+                        f"{correction_text.rstrip('. ')}. [{correction_label}]"
+                    )
+                return f"{correction_text.rstrip('. ')}. [{correction_label}]"
+
         bullets = []
-        for index, item in enumerate(retrieved[:2]):
+        for index, item in enumerate(prioritized[:2]):
             snippet = item.content[:260].rsplit(" ", 1)[0]
             bullets.append(f"{snippet} [{index + 1}]")
         if not bullets:
@@ -208,7 +241,7 @@ class RuntimeService:
         citations: list[dict] = []
         seen_documents: set[str] = set()
         label_index = 1
-        for item in retrieved:
+        for item in self._prioritize_retrieved(retrieved):
             if item.document_id in seen_documents:
                 continue
             seen_documents.add(item.document_id)
