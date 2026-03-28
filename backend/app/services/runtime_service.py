@@ -126,6 +126,7 @@ class RuntimeService:
             history=history,
             pending_action=conversation.pending_action,
             pending_payload=conversation.pending_payload or {},
+            supports_lookup_tools=self._supports_lookup_tools(agent),
         )
 
         assistant_message = Message(
@@ -153,6 +154,7 @@ class RuntimeService:
         }
 
     def run_replay(self, db: Session, revision: AgentRevision, prompt_text: str) -> ReplyResult:
+        agent = db.get(Agent, revision.agent_id)
         return self.generate_reply(
             db,
             revision=revision,
@@ -160,6 +162,7 @@ class RuntimeService:
             history=[],
             pending_action=None,
             pending_payload={},
+            supports_lookup_tools=self._supports_lookup_tools(agent),
         )
 
     def generate_reply(
@@ -171,13 +174,14 @@ class RuntimeService:
         history: list[dict[str, str]],
         pending_action: str | None,
         pending_payload: dict,
+        supports_lookup_tools: bool,
     ) -> ReplyResult:
-        if pending_action == "application_status":
+        if supports_lookup_tools and pending_action == "application_status":
             return self._handle_pending_application(message_text)
-        if pending_action == "failed_transaction":
+        if supports_lookup_tools and pending_action == "failed_transaction":
             return self._handle_pending_transaction(message_text)
 
-        intent = self._classify_intent(message_text)
+        intent = self._classify_intent(message_text, supports_lookup_tools)
         if intent == "application_status":
             application_ref = self._extract_application_ref(message_text)
             if not application_ref:
@@ -217,6 +221,9 @@ class RuntimeService:
         answer = self._answer_from_retrieval(revision, message_text, history, retrieved)
         citations = self._build_citations(retrieved)
         return ReplyResult(intent="kb_qa", message=answer, citations=citations)
+
+    def _supports_lookup_tools(self, agent: Agent | None) -> bool:
+        return bool(agent and agent.role == "support")
 
     def _answer_from_retrieval(
         self,
@@ -307,11 +314,11 @@ class RuntimeService:
         db.flush()
         return conversation
 
-    def _classify_intent(self, message_text: str) -> str:
+    def _classify_intent(self, message_text: str, supports_lookup_tools: bool) -> str:
         lowered = normalize_whitespace(message_text.lower())
-        if self._looks_like_personal_application_status(lowered):
+        if supports_lookup_tools and self._looks_like_personal_application_status(lowered):
             return "application_status"
-        if self._looks_like_personal_failed_transaction(lowered):
+        if supports_lookup_tools and self._looks_like_personal_failed_transaction(lowered):
             return "failed_transaction"
         return "kb_qa"
 

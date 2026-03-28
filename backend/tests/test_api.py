@@ -267,7 +267,43 @@ def test_generate_agent_coerces_non_string_blueprint_fields(monkeypatch) -> None
     assert payload["blueprint"]["description"] == "Priority chat"
     assert payload["blueprint"]["instructions"] == "Use verified KB only. Escalate if unsure."
     assert payload["blueprint"]["knowledge_summary"] == "Card FAQ Escalation flow"
-    assert payload["blueprint"]["enabled_tools"] == ["application_status"]
+    assert payload["blueprint"]["enabled_tools"] == ["support_handoff"]
+
+
+def test_generated_agents_do_not_use_lookup_flows(monkeypatch) -> None:
+    monkeypatch.setattr(
+        gemini_service,
+        "create_blueprint",
+        lambda **kwargs: {
+            "name": "Internal IT Support",
+            "description": "IT helpdesk demo agent",
+            "instructions": "Answer only from uploaded knowledge.",
+            "knowledge_summary": "Reset passwords and access requests.",
+            "enabled_tools": ["application_status", "failed_transaction"],
+        },
+    )
+
+    generated = client.post(
+        "/api/meta/generate-agent",
+        data={
+            "agent_name": "Internal IT Support",
+            "description": "IT helpdesk demo agent",
+            "instructions": "Answer only from uploaded knowledge.",
+        },
+    )
+    assert generated.status_code == 200
+    generated_payload = generated.json()
+    assert generated_payload["blueprint"]["enabled_tools"] == ["support_handoff"]
+
+    response = client.post(
+        f"/api/chat/{generated_payload['agent']['id']}",
+        json={"message": "Please check my application status"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["intent"] != "application_status"
+    assert payload["needs_followup"] is False
+    assert payload["conversation"]["pending_action"] is None
 
 
 def test_auto_fix_improves_future_faq_answers(monkeypatch) -> None:

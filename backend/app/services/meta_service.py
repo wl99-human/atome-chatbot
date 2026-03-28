@@ -72,6 +72,7 @@ class MetaService:
         )
         fallback_description = description or f"{agent_name} support agent"
         fallback_summary = "\n".join(document_summaries)
+        generated_agent_tools = ["support_handoff"]
 
         blueprint = AgentBlueprint(
             name=_coerce_blueprint_text(blueprint_data.get("name"), agent_name) or agent_name,
@@ -86,7 +87,7 @@ class MetaService:
                 blueprint_data.get("knowledge_summary"), fallback_summary
             )
             or fallback_summary,
-            enabled_tools_json=_coerce_enabled_tools(blueprint_data.get("enabled_tools")),
+            enabled_tools_json=generated_agent_tools,
         )
         db.add(blueprint)
         db.flush()
@@ -108,7 +109,7 @@ class MetaService:
             status="published",
             sync_status="ready",
             source_summary=blueprint.knowledge_summary,
-            payload_json={"enabled_tools": blueprint.enabled_tools_json},
+            payload_json={"enabled_tools": generated_agent_tools},
         )
         db.add(revision)
         db.flush()

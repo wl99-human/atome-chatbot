@@ -13,28 +13,41 @@ import { useAppShell } from "../../layout/AppShell";
 import { classNames, describePendingAction, getSyncTone } from "../../lib/utils";
 import type { ChatResponse, UIMessage } from "../../types/api";
 
-const quickPrompts = [
-  {
-    label: "KB question",
-    prompt: "How do I change the mobile number for my account?",
-  },
-  {
-    label: "Application status",
-    prompt: "Please check my application status",
-  },
-  {
-    label: "Failed transaction",
-    prompt: "My card transaction failed and I need help checking it",
-  },
-];
+function buildQuickPrompts(agentRole?: string) {
+  if (agentRole === "support") {
+    return [
+      {
+        label: "KB question",
+        prompt: "How do I change the mobile number for my account?",
+      },
+      {
+        label: "Application status",
+        prompt: "Please check my application status",
+      },
+      {
+        label: "Failed transaction",
+        prompt: "My card transaction failed and I need help checking it",
+      },
+    ];
+  }
 
-function buildWelcomeMessage(agentName?: string) {
+  return [
+    {
+      label: "Knowledge question",
+      prompt: "What can you help me with from your knowledge base?",
+    },
+  ];
+}
+
+function buildWelcomeMessage(agentName?: string, agentRole?: string) {
   return [
     {
       id: `welcome-${agentName ?? "default"}`,
       role: "assistant" as const,
       content: agentName
-        ? `You are chatting with ${agentName}. Ask a knowledge-base question, or try a status lookup flow.`
+        ? agentRole === "support"
+          ? `You are chatting with ${agentName}. Ask a knowledge-base question, or try a status lookup flow.`
+          : `You are chatting with ${agentName}. Ask a question grounded in this agent's knowledge base.`
         : "Choose an agent to start a conversation.",
     },
   ];
@@ -46,7 +59,9 @@ export function CustomerPage() {
   const { showToast } = useToast();
   const { selectedAgent, selectedAgentId } = useAppShell();
   const [conversationId, setConversationId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<UIMessage[]>(buildWelcomeMessage(selectedAgent?.name));
+  const [messages, setMessages] = useState<UIMessage[]>(
+    buildWelcomeMessage(selectedAgent?.name, selectedAgent?.role),
+  );
   const [chatInput, setChatInput] = useState("");
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [reportTargetId, setReportTargetId] = useState<string | null>(null);
@@ -61,8 +76,8 @@ export function CustomerPage() {
     setConversationId(null);
     setPendingAction(null);
     setChatInput("");
-    setMessages(buildWelcomeMessage(selectedAgent?.name));
-  }, [selectedAgent?.id, selectedAgent?.name]);
+    setMessages(buildWelcomeMessage(selectedAgent?.name, selectedAgent?.role));
+  }, [selectedAgent?.id, selectedAgent?.name, selectedAgent?.role]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -173,7 +188,7 @@ export function CustomerPage() {
     setConversationId(null);
     setPendingAction(null);
     setChatInput("");
-    setMessages(buildWelcomeMessage(selectedAgent?.name));
+    setMessages(buildWelcomeMessage(selectedAgent?.name, selectedAgent?.role));
   }
 
   function openReportModal(messageId: string) {
@@ -219,6 +234,12 @@ export function CustomerPage() {
       />
     );
   }
+
+  const quickPrompts = buildQuickPrompts(selectedAgent.role);
+  const chatPlaceholder =
+    selectedAgent.role === "support"
+      ? "Ask about Atome Card, or request an application / transaction lookup."
+      : "Ask a question grounded in this agent's knowledge base.";
 
   return (
     <>
@@ -352,7 +373,7 @@ export function CustomerPage() {
                     onChange={(event) => setChatInput(event.target.value)}
                     onKeyDown={handleKeyDown}
                     rows={1}
-                    placeholder="Ask about Atome Card, or request an application / transaction lookup."
+                    placeholder={chatPlaceholder}
                     className="min-h-[24px] w-full resize-none border-0 bg-transparent p-0 text-sm leading-6 text-slate-900 outline-none placeholder:text-slate-400"
                   />
                 </div>
