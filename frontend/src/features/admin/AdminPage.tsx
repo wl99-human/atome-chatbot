@@ -365,6 +365,7 @@ export function AdminPage() {
               <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
                 {issues.map((issue) => {
                   const expanded = expandedIssueId === issue.id;
+                  const isFixedIssue = issue.status === "archived" || issue.latest_fix_attempt?.replay_passed === true;
                   return (
                     <Card key={issue.id} className="space-y-3 p-4">
                       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -384,14 +385,18 @@ export function AdminPage() {
                           >
                             {expanded ? "Hide details" : "View details"}
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => autoFixMutation.mutate(issue.id)}
-                            disabled={autoFixMutation.isPending && autoFixMutation.variables === issue.id}
-                            className="rounded-full bg-slate-950 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800"
-                          >
-                            {autoFixMutation.isPending && autoFixMutation.variables === issue.id ? "Running..." : "Auto-fix"}
-                          </button>
+                          {!isFixedIssue ? (
+                            <button
+                              type="button"
+                              onClick={() => autoFixMutation.mutate(issue.id)}
+                              disabled={autoFixMutation.isPending && autoFixMutation.variables === issue.id}
+                              className="rounded-full bg-slate-950 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800"
+                            >
+                              {autoFixMutation.isPending && autoFixMutation.variables === issue.id ? "Running..." : "Auto-fix"}
+                            </button>
+                          ) : (
+                            <StatusBadge tone="success">Fixed</StatusBadge>
+                          )}
                         </div>
                       </div>
 
