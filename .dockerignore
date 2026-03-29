@@ -1,0 +1,12 @@
+.git
+.gitignore
+.pytest_cache
+backend/.pytest_cache
+backend/.venv
+backend/__pycache__
+backend/**/*.pyc
+backend/.env
+backend/atome_chatbot.db
+frontend/node_modules
+frontend/dist
+frontend/.env

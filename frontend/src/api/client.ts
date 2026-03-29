@@ -7,7 +7,12 @@ import type {
   SyncResponse,
 } from "../types/api";
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/api";
+const DEFAULT_API_BASE =
+  typeof window !== "undefined" && !["localhost", "127.0.0.1", "::1"].includes(window.location.hostname)
+    ? "/api"
+    : "http://localhost:8000/api";
+
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? DEFAULT_API_BASE;
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
