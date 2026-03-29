@@ -2,6 +2,7 @@ services:
   - type: web
     name: atome-chatbot
     runtime: docker
+    plan: free
     dockerfilePath: ./Dockerfile
     dockerContext: .
     healthCheckPath: /health
@@ -25,5 +26,5 @@ databases:
   - name: atome-chatbot-db
     databaseName: atome_chatbot
     user: atome_chatbot
-    plan: basic-256mb
+    plan: free
     ipAllowList: []
