@@ -8,13 +8,13 @@ import { AppShell } from "./layout/AppShell";
 export default function App() {
   return (
     <Routes>
-      <Route element={<AppShell />}>
-        <Route index element={<Navigate replace to="/customer" />} />
-        <Route path="/customer" element={<CustomerPage />} />
-        <Route path="/admin" element={<AdminPage />} />
-        <Route path="/manager" element={<ManagerPage />} />
-        <Route path="*" element={<Navigate replace to="/customer" />} />
+      <Route path="/" element={<AppShell />}>
+        <Route index element={<Navigate replace to="customer" />} />
+        <Route path="customer" element={<CustomerPage />} />
+        <Route path="admin" element={<AdminPage />} />
+        <Route path="manager" element={<ManagerPage />} />
       </Route>
+      <Route path="*" element={<Navigate replace to="/customer" />} />
     </Routes>
   );
 }
