@@ -80,9 +80,11 @@ This repo now includes a root-level `Dockerfile` and `render.yaml` Blueprint for
 5. Deploy.
 
 Notes:
+- The Blueprint is configured for a fully free demo setup: `plan: free` for both the web service and Postgres.
 - `AUTO_SYNC_DEFAULT_AGENT` is set to `false` in `render.yaml` so deploys do not block on a live KB sync during startup.
 - The app uses Render Postgres in production via `DATABASE_URL`.
 - The frontend defaults to same-origin `/api` in production, so the single-service setup works behind one Render URL.
+- Render free-tier tradeoffs apply: the web service spins down after inactivity, and the free Postgres instance is suitable for demos only.
 
 ## Environment Variables
 Backend example is in [backend/.env.example](/c:/PrivateProject/atome-chatbot/backend/.env.example).
