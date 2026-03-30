@@ -2,10 +2,11 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 
-import { autoFixIssue, fetchIssues, publishAgent, syncAgent } from "../../api/client";
+import { autoFixIssue, deleteAgent, fetchIssues, publishAgent, resetAgent, syncAgent } from "../../api/client";
 import { Card } from "../../components/ui/Card";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { InlineAlert } from "../../components/ui/InlineAlert";
+import { Modal } from "../../components/ui/Modal";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { useToast } from "../../components/ui/ToastProvider";
 import { useAppShell } from "../../layout/AppShell";
@@ -30,6 +31,7 @@ export function AdminPage() {
   } | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("open");
   const [expandedIssueId, setExpandedIssueId] = useState<string | null>(null);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 
   const activeTab: AdminTab = searchParams.get("panel") === "issues" ? "issues" : "overview";
 
@@ -125,6 +127,51 @@ export function AdminPage() {
     },
   });
 
+  const resetMutation = useMutation({
+    mutationFn: () => resetAgent(selectedAgentId),
+    onSuccess: async (agent) => {
+      setOverviewNotice({
+        tone: "success",
+        title: "Agent reset to v1",
+        message: `${agent.name} has been reset to revision 1 with a fresh knowledge sync.`,
+      });
+      await queryClient.invalidateQueries({ queryKey: ["bootstrap"] });
+      showToast({
+        title: "Reset complete",
+        description: "The agent is back on revision 1.",
+        tone: "success",
+      });
+    },
+    onError: (error: Error) => {
+      setOverviewNotice({
+        tone: "danger",
+        title: "Reset failed",
+        message: error.message,
+      });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: () => deleteAgent(selectedAgentId),
+    onSuccess: async () => {
+      setConfirmDeleteOpen(false);
+      await queryClient.invalidateQueries({ queryKey: ["bootstrap"] });
+      showToast({
+        title: "Agent deleted",
+        description: "The agent and all its data have been removed.",
+        tone: "success",
+      });
+    },
+    onError: (error: Error) => {
+      setConfirmDeleteOpen(false);
+      showToast({
+        title: "Delete failed",
+        description: error.message,
+        tone: "danger",
+      });
+    },
+  });
+
   function setTab(tab: AdminTab) {
     const next = new URLSearchParams(searchParams.toString());
     next.set("panel", tab);
@@ -159,8 +206,9 @@ export function AdminPage() {
   }
 
   return (
-    <div className="h-full min-h-0">
-      <Card className="flex h-full min-h-0 flex-col space-y-2.5 overflow-hidden p-3">
+    <>
+      <div className="h-full min-h-0">
+        <Card className="flex h-full min-h-0 flex-col space-y-2.5 overflow-hidden p-3">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="font-mono text-[10px] uppercase tracking-[0.28em] text-slate-500">Admin Studio</p>
@@ -293,6 +341,23 @@ export function AdminPage() {
                   >
                     {syncMutation.isPending ? "Syncing..." : "Sync sources"}
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => resetMutation.mutate()}
+                    disabled={!selectedAgentId || resetMutation.isPending}
+                    className="rounded-full border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm font-semibold text-amber-800 transition hover:bg-amber-100"
+                  >
+                    {resetMutation.isPending ? "Resetting..." : "Reset to v1"}
+                  </button>
+                  {selectedAgent.role !== "support" ? (
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDeleteOpen(true)}
+                      className="rounded-full border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-semibold text-red-700 transition hover:bg-red-100"
+                    >
+                      Delete agent
+                    </button>
+                  ) : null}
                 </div>
               </Card>
 
@@ -445,6 +510,32 @@ export function AdminPage() {
           </div>
         )}
       </Card>
-    </div>
+      </div>
+
+      <Modal
+        open={confirmDeleteOpen}
+        title="Delete agent?"
+        description={`This will permanently remove "${selectedAgent.name}" and all its revisions, conversations, and issues.`}
+        onClose={() => setConfirmDeleteOpen(false)}
+      >
+        <div className="flex flex-wrap gap-3">
+          <button
+            type="button"
+            onClick={() => deleteMutation.mutate()}
+            disabled={deleteMutation.isPending}
+            className="rounded-full bg-red-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-red-700"
+          >
+            {deleteMutation.isPending ? "Deleting..." : "Yes, delete permanently"}
+          </button>
+          <button
+            type="button"
+            onClick={() => setConfirmDeleteOpen(false)}
+            className="rounded-full border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+          >
+            Cancel
+          </button>
+        </div>
+      </Modal>
+    </>
   );
 }

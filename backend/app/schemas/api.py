@@ -137,4 +137,10 @@ class BootstrapResponse(BaseModel):
     model: str
 
 
+class DeleteAgentResponse(BaseModel):
+    deleted: bool
+    agent_id: str
+    message: str
+
+
 AgentCreateResponse.model_rebuild()

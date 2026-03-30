@@ -16,6 +16,7 @@ from app.schemas.api import (
     ChatRequest,
     ChatResponse,
     ConversationResponse,
+    DeleteAgentResponse,
     FixAttemptResponse,
     IssueCreateRequest,
     IssueResponse,
@@ -215,6 +216,54 @@ def sync_sources(agent_id: str, db: Session = Depends(get_db)) -> SyncResponse:
         sync_mode=sync_result.sync_mode,
         fallback_used=sync_result.fallback_used,
         last_sync_warning=sync_result.last_sync_warning,
+    )
+
+
+@router.post("/agents/{agent_id}/reset", response_model=AgentResponse)
+def reset_agent(agent_id: str, db: Session = Depends(get_db)) -> AgentResponse:
+    agent = db.get(Agent, agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found.")
+
+    # Keep only the very first revision (version 1) and delete the rest
+    revisions = sorted(agent.revisions, key=lambda r: r.version)
+    if not revisions:
+        raise HTTPException(status_code=400, detail="Agent has no revisions to reset.")
+
+    first_revision = revisions[0]
+    for revision in revisions[1:]:
+        db.delete(revision)
+    db.flush()
+
+    # Re-sync the first revision so knowledge is fresh
+    source_service.sync_revision_sources(
+        db,
+        first_revision,
+        knowledge_base_url=first_revision.knowledge_base_url,
+        preserve_corrections=False,
+    )
+    agent.active_revision_id = first_revision.id
+    db.commit()
+    db.refresh(agent)
+    return _agent_response(agent)
+
+
+@router.delete("/agents/{agent_id}", response_model=DeleteAgentResponse)
+def delete_agent(agent_id: str, db: Session = Depends(get_db)) -> DeleteAgentResponse:
+    agent = db.get(Agent, agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found.")
+    if agent.role == "support":
+        raise HTTPException(
+            status_code=403,
+            detail="The default Atome support agent cannot be deleted.",
+        )
+    db.delete(agent)
+    db.commit()
+    return DeleteAgentResponse(
+        deleted=True,
+        agent_id=agent_id,
+        message=f"Agent '{agent.name}' has been permanently deleted.",
     )
 
 

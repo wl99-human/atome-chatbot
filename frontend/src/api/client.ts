@@ -95,3 +95,13 @@ export function generateAgent(formData: FormData) {
     body: formData,
   });
 }
+
+export function resetAgent(agentId: string) {
+  return request<Agent>(`/agents/${agentId}/reset`, { method: "POST" });
+}
+
+export function deleteAgent(agentId: string) {
+  return request<{ deleted: boolean; agent_id: string; message: string }>(`/agents/${agentId}`, {
+    method: "DELETE",
+  });
+}
