@@ -4,7 +4,8 @@ FROM node:20-bookworm-slim AS frontend-builder
 WORKDIR /app/frontend
 
 COPY frontend/package.json frontend/package-lock.json frontend/.npmrc ./
-RUN npm ci
+RUN printf "registry=https://registry.npmjs.org/\n" > /tmp/npmrc-public \
+    && npm ci --userconfig=/tmp/npmrc-public --registry=https://registry.npmjs.org/
 
 COPY frontend/ ./
 RUN npm run build
