@@ -87,6 +87,12 @@ def test_bootstrap_returns_seeded_agent() -> None:
     assert payload["agents"][0]["name"] == "Atome Card Support"
 
 
+def test_root_redirects_to_customer_and_preserves_query() -> None:
+    response = client.get("/?agent=test-agent-id", follow_redirects=False)
+    assert response.status_code == 307
+    assert response.headers["location"] == "/customer?agent=test-agent-id"
+
+
 def test_zendesk_ingestion_parses_sections_and_article_html(monkeypatch) -> None:
     install_fixture_kb(monkeypatch)
     documents = source_service.parse_public_help_center(

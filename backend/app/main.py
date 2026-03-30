@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import router
@@ -32,6 +32,15 @@ app.include_router(router, prefix=settings.api_prefix)
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "model": settings.gemini_model}
+
+
+@app.get("/", include_in_schema=False)
+def root_redirect(request: Request) -> RedirectResponse:
+    query = str(request.url.query)
+    target = "/customer"
+    if query:
+        target = f"{target}?{query}"
+    return RedirectResponse(url=target, status_code=307)
 
 
 frontend_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
