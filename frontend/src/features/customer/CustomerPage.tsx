@@ -13,6 +13,13 @@ import { useAppShell } from "../../layout/AppShell";
 import { classNames, describePendingAction, getSyncTone } from "../../lib/utils";
 import type { ChatResponse, UIMessage } from "../../types/api";
 
+type StoredChatSession = {
+  conversationId: string | null;
+  messages: UIMessage[];
+  chatInput: string;
+  pendingAction: string | null;
+};
+
 function buildQuickPrompts(agentRole?: string) {
   if (agentRole === "support") {
     return [
@@ -53,15 +60,57 @@ function buildWelcomeMessage(agentName?: string, agentRole?: string) {
   ];
 }
 
+function buildInitialChatSession(agentName?: string, agentRole?: string): StoredChatSession {
+  return {
+    conversationId: null,
+    messages: buildWelcomeMessage(agentName, agentRole),
+    chatInput: "",
+    pendingAction: null,
+  };
+}
+
+function getChatStorageKey(agentId?: string, revisionId?: string | null) {
+  if (!agentId) {
+    return null;
+  }
+  return `customer-chat:${agentId}:${revisionId ?? "no-revision"}`;
+}
+
+function loadStoredChatSession(
+  storageKey: string | null,
+  agentName?: string,
+  agentRole?: string,
+): StoredChatSession {
+  const fallback = buildInitialChatSession(agentName, agentRole);
+  if (!storageKey || typeof window === "undefined") {
+    return fallback;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) {
+      return fallback;
+    }
+    const parsed = JSON.parse(raw) as Partial<StoredChatSession>;
+    return {
+      conversationId: typeof parsed.conversationId === "string" ? parsed.conversationId : null,
+      messages: Array.isArray(parsed.messages) && parsed.messages.length ? parsed.messages : fallback.messages,
+      chatInput: typeof parsed.chatInput === "string" ? parsed.chatInput : "",
+      pendingAction: typeof parsed.pendingAction === "string" ? parsed.pendingAction : null,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
 export function CustomerPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { showToast } = useToast();
   const { selectedAgent, selectedAgentId } = useAppShell();
+  const chatStorageKey = getChatStorageKey(selectedAgent?.id, selectedAgent?.active_revision_id);
   const [conversationId, setConversationId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<UIMessage[]>(
-    buildWelcomeMessage(selectedAgent?.name, selectedAgent?.role),
-  );
+  const [messages, setMessages] = useState<UIMessage[]>(buildWelcomeMessage(selectedAgent?.name, selectedAgent?.role));
   const [chatInput, setChatInput] = useState("");
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [reportTargetId, setReportTargetId] = useState<string | null>(null);
@@ -73,11 +122,27 @@ export function CustomerPage() {
   const textareaRef = useAutosizeTextarea<HTMLTextAreaElement>(chatInput);
 
   useEffect(() => {
-    setConversationId(null);
-    setPendingAction(null);
-    setChatInput("");
-    setMessages(buildWelcomeMessage(selectedAgent?.name, selectedAgent?.role));
-  }, [selectedAgent?.id, selectedAgent?.name, selectedAgent?.role]);
+    const storedSession = loadStoredChatSession(chatStorageKey, selectedAgent?.name, selectedAgent?.role);
+    setConversationId(storedSession.conversationId);
+    setPendingAction(storedSession.pendingAction);
+    setChatInput(storedSession.chatInput);
+    setMessages(storedSession.messages);
+  }, [chatStorageKey, selectedAgent?.name, selectedAgent?.role]);
+
+  useEffect(() => {
+    if (!chatStorageKey || typeof window === "undefined") {
+      return;
+    }
+    window.localStorage.setItem(
+      chatStorageKey,
+      JSON.stringify({
+        conversationId,
+        messages,
+        chatInput,
+        pendingAction,
+      } satisfies StoredChatSession),
+    );
+  }, [chatInput, chatStorageKey, conversationId, messages, pendingAction]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -185,10 +250,14 @@ export function CustomerPage() {
   }
 
   function resetConversation() {
-    setConversationId(null);
-    setPendingAction(null);
-    setChatInput("");
-    setMessages(buildWelcomeMessage(selectedAgent?.name, selectedAgent?.role));
+    const freshSession = buildInitialChatSession(selectedAgent?.name, selectedAgent?.role);
+    if (chatStorageKey && typeof window !== "undefined") {
+      window.localStorage.removeItem(chatStorageKey);
+    }
+    setConversationId(freshSession.conversationId);
+    setPendingAction(freshSession.pendingAction);
+    setChatInput(freshSession.chatInput);
+    setMessages(freshSession.messages);
   }
 
   function openReportModal(messageId: string) {
