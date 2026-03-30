@@ -139,7 +139,56 @@ export function ManagerPage() {
               <div className="flex items-center gap-3">
                 <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-950 text-xs font-semibold text-white">1</div>
                 <div>
-                  <h2 className="text-sm font-semibold text-slate-950">Upload source documents</h2>
+                  <h2 className="text-sm font-semibold text-slate-950">Define the operating instructions</h2>
+                  <p className="text-xs leading-5 text-slate-500">Describe how the generated agent should answer and handle lookups.</p>
+                </div>
+              </div>
+
+              <label className="block text-sm font-medium text-slate-700">
+                Agent name
+                <input
+                  value={agentName}
+                  onChange={(event) => setAgentName(event.target.value)}
+                    className="mt-2 w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-slate-400"
+                />
+              </label>
+              <label className="block text-sm font-medium text-slate-700">
+                Description
+                <textarea
+                  value={description}
+                  onChange={(event) => setDescription(event.target.value)}
+                  rows={1}
+                    className="mt-2 w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-slate-400"
+                />
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {instructionTemplates.map((template) => (
+                  <button
+                    key={template.label}
+                    type="button"
+                    onClick={() => applyTemplate(template.text)}
+                    className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                  >
+                    Use {template.label}
+                  </button>
+                ))}
+              </div>
+              <label className="block text-sm font-medium text-slate-700">
+                Instructions
+                <textarea
+                  value={instructions}
+                  onChange={(event) => setInstructions(event.target.value)}
+                    rows={2}
+                    className="mt-2 w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-slate-400"
+                  />
+                </label>
+              </Card>
+
+            <Card className="space-y-2.5 rounded-[18px] bg-slate-50 p-3">
+              <div className="flex items-center gap-3">
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-950 text-xs font-semibold text-white">2</div>
+                <div>
+                  <h2 className="text-sm font-semibold text-slate-950">Update knowledge base</h2>
                   <p className="text-xs leading-5 text-slate-500">Bring in the knowledge base material the agent should answer from.</p>
                 </div>
               </div>
@@ -196,55 +245,6 @@ export function ManagerPage() {
                 <p className="text-xs leading-5 text-slate-500">No files selected yet. You can still generate an agent from instructions alone.</p>
               )}
             </Card>
-
-            <Card className="space-y-2.5 rounded-[18px] bg-slate-50 p-3">
-              <div className="flex items-center gap-3">
-                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-950 text-xs font-semibold text-white">2</div>
-                <div>
-                  <h2 className="text-sm font-semibold text-slate-950">Define the operating instructions</h2>
-                  <p className="text-xs leading-5 text-slate-500">Describe how the generated agent should answer and handle lookups.</p>
-                </div>
-              </div>
-
-              <label className="block text-sm font-medium text-slate-700">
-                Agent name
-                <input
-                  value={agentName}
-                  onChange={(event) => setAgentName(event.target.value)}
-                    className="mt-2 w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-slate-400"
-                />
-              </label>
-              <label className="block text-sm font-medium text-slate-700">
-                Description
-                <textarea
-                  value={description}
-                  onChange={(event) => setDescription(event.target.value)}
-                  rows={1}
-                    className="mt-2 w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-slate-400"
-                />
-              </label>
-              <div className="flex flex-wrap gap-2">
-                {instructionTemplates.map((template) => (
-                  <button
-                    key={template.label}
-                    type="button"
-                    onClick={() => applyTemplate(template.text)}
-                    className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
-                  >
-                    Use {template.label}
-                  </button>
-                ))}
-              </div>
-              <label className="block text-sm font-medium text-slate-700">
-                Instructions
-                <textarea
-                  value={instructions}
-                  onChange={(event) => setInstructions(event.target.value)}
-                    rows={2}
-                    className="mt-2 w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-slate-400"
-                  />
-                </label>
-              </Card>
 
             <Card className="space-y-2.5 rounded-[18px] bg-slate-50 p-3">
               <div className="flex items-center gap-3">
