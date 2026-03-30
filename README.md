@@ -33,9 +33,9 @@ This repo implements a Python-first customer service bot plus a manager-facing m
   - archive the issue with fix metadata
 
 ## Project Structure
-- [backend](/c:/PrivateProject/atome-chatbot/backend)
-- [frontend](/c:/PrivateProject/atome-chatbot/frontend)
-- [README.md](/c:/PrivateProject/atome-chatbot/README.md)
+- [backend](./backend)
+- [frontend](./frontend)
+- [README.md](./README.md)
 
 ## Local Setup
 ### Backend
@@ -87,7 +87,7 @@ Notes:
 - Render free-tier tradeoffs apply: the web service spins down after inactivity, and the free Postgres instance is suitable for demos only.
 
 ## Environment Variables
-Backend example is in [backend/.env.example](/c:/PrivateProject/atome-chatbot/backend/.env.example).
+Backend example is in [backend/.env.example](./backend/.env.example).
 
 Key values:
 - `DATABASE_URL`
@@ -116,7 +116,7 @@ Key values:
 - Frontend build: `cd frontend && npm run build`
 
 ## AI Usage
-This implementation was built with AI assistance using a GPT-5-based coding agent in Codex-style workflow support. AI was used for scaffolding, code generation, refactoring, and debugging. Final architecture, tradeoffs, and validation were still selected and checked during implementation.
+This implementation was built with AI assistance using Gemini models (Gemini 2.5 Flash, Gemini 3.1 Pro) via the Antigravity coding agent in VS Code. AI was used for scaffolding, code generation, refactoring, and debugging. Final architecture, product decisions, and validation were reviewed and directed by the developer.
 
 ## Notes
 - If `GEMINI_API_KEY` is missing, the app still runs with deterministic fallback behavior for retrieval answers and mock tool flows.
