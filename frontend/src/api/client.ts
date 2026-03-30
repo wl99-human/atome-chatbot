@@ -100,6 +100,15 @@ export function resetAgent(agentId: string) {
   return request<Agent>(`/agents/${agentId}/reset`, { method: "POST" });
 }
 
+export function uploadAgentDocuments(agentId: string, files: File[]) {
+  const formData = new FormData();
+  files.forEach((file) => formData.append("files", file));
+  return request<Agent>(`/agents/${agentId}/upload-documents`, {
+    method: "POST",
+    body: formData,
+  });
+}
+
 export function deleteAgent(agentId: string) {
   return request<{ deleted: boolean; agent_id: string; message: string }>(`/agents/${agentId}`, {
     method: "DELETE",

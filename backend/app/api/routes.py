@@ -248,6 +248,37 @@ def reset_agent(agent_id: str, db: Session = Depends(get_db)) -> AgentResponse:
     return _agent_response(agent)
 
 
+@router.post("/agents/{agent_id}/upload-documents", response_model=AgentResponse)
+async def upload_agent_documents(
+    agent_id: str,
+    files: list[UploadFile] = File(...),
+    db: Session = Depends(get_db),
+) -> AgentResponse:
+    try:
+        agent, revision = runtime_service.get_active_agent_and_revision(db, agent_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    if not files:
+        raise HTTPException(status_code=400, detail="No files were provided.")
+
+    total_chunks = 0
+    for upload in files:
+        raw_bytes = await upload.read()
+        parsed = source_service.parse_uploaded_document(
+            upload.filename or "untitled", upload.content_type, raw_bytes
+        )
+        total_chunks += source_service.add_document(db, revision, parsed)
+
+    revision.source_summary = (
+        f"{revision.source_summary or ''} "
+        f"Added {len(files)} uploaded document(s) with {total_chunks} new chunk(s)."
+    ).strip()
+    db.commit()
+    db.refresh(agent)
+    return _agent_response(agent)
+
+
 @router.delete("/agents/{agent_id}", response_model=DeleteAgentResponse)
 def delete_agent(agent_id: str, db: Session = Depends(get_db)) -> DeleteAgentResponse:
     agent = db.get(Agent, agent_id)

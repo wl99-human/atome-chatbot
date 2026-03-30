@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type DragEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 
-import { autoFixIssue, deleteAgent, fetchIssues, publishAgent, resetAgent, syncAgent } from "../../api/client";
+import { autoFixIssue, deleteAgent, fetchIssues, publishAgent, resetAgent, syncAgent, uploadAgentDocuments } from "../../api/client";
 import { Card } from "../../components/ui/Card";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { InlineAlert } from "../../components/ui/InlineAlert";
@@ -10,7 +10,7 @@ import { Modal } from "../../components/ui/Modal";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { useToast } from "../../components/ui/ToastProvider";
 import { useAppShell } from "../../layout/AppShell";
-import { classNames, formatTimestamp, getIssueStatusTone, getSyncTone } from "../../lib/utils";
+import { classNames, formatFileSize, formatTimestamp, getIssueStatusTone, getSyncTone, mergeFiles } from "../../lib/utils";
 
 type AdminTab = "overview" | "issues";
 type StatusFilter = "open" | "archived" | "all";
@@ -32,6 +32,9 @@ export function AdminPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("open");
   const [expandedIssueId, setExpandedIssueId] = useState<string | null>(null);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [uploadFiles, setUploadFiles] = useState<File[]>([]);
+  const [dragActive, setDragActive] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const activeTab: AdminTab = searchParams.get("panel") === "issues" ? "issues" : "overview";
 
@@ -49,6 +52,7 @@ export function AdminPage() {
     setKnowledgeBaseUrl(selectedAgent.knowledge_base_url ?? "");
     setGuidelines(selectedAgent.additional_guidelines ?? "");
     setOverviewNotice(null);
+    setUploadFiles([]);
   }, [selectedAgent]);
 
   const publishMutation = useMutation({
@@ -168,6 +172,31 @@ export function AdminPage() {
         title: "Delete failed",
         description: error.message,
         tone: "danger",
+      });
+    },
+  });
+
+  const uploadMutation = useMutation({
+    mutationFn: () => uploadAgentDocuments(selectedAgentId, uploadFiles),
+    onSuccess: async (agent) => {
+      setUploadFiles([]);
+      setOverviewNotice({
+        tone: "success",
+        title: "Documents uploaded",
+        message: `Knowledge for ${agent.name} has been updated with the uploaded files.`,
+      });
+      await queryClient.invalidateQueries({ queryKey: ["bootstrap"] });
+      showToast({
+        title: "Upload complete",
+        description: `${uploadFiles.length} document(s) added to the agent's knowledge.`,
+        tone: "success",
+      });
+    },
+    onError: (error: Error) => {
+      setOverviewNotice({
+        tone: "danger",
+        title: "Upload failed",
+        message: error.message,
       });
     },
   });
@@ -311,9 +340,59 @@ export function AdminPage() {
                   <input
                     value={knowledgeBaseUrl}
                     onChange={(event) => setKnowledgeBaseUrl(event.target.value)}
+                    placeholder="https://help.atome.ph/hc/en-gb/categories/..."
                     className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-2.5 text-sm text-slate-900 outline-none transition focus:border-slate-400"
                   />
                 </label>
+
+                <div>
+                  <p className="text-sm font-medium text-slate-700">Upload knowledge documents</p>
+                  <p className="mt-0.5 text-[11px] leading-4 text-slate-500">PDF, DOCX, or TXT files that supplement the KB URL.</p>
+                  <div
+                    onDragOver={(event: DragEvent<HTMLDivElement>) => { event.preventDefault(); setDragActive(true); }}
+                    onDragLeave={() => setDragActive(false)}
+                    onDrop={(event: DragEvent<HTMLDivElement>) => { event.preventDefault(); setDragActive(false); if (event.dataTransfer.files) setUploadFiles((c) => mergeFiles(c, Array.from(event.dataTransfer.files))); }}
+                    className={classNames(
+                      "mt-2 rounded-2xl border-2 border-dashed px-3 py-3 text-center transition",
+                      dragActive ? "border-orange-400 bg-orange-50" : "border-slate-300 bg-white",
+                    )}
+                  >
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      multiple
+                      onChange={(event) => { if (event.target.files) setUploadFiles((c) => mergeFiles(c, Array.from(event.target.files!))); }}
+                      className="hidden"
+                    />
+                    <p className="text-xs font-semibold text-slate-900">Drag files here or browse</p>
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="mt-1.5 rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                    >
+                      Choose files
+                    </button>
+                  </div>
+                  {uploadFiles.length > 0 && (
+                    <div className="mt-2 max-h-24 space-y-1.5 overflow-y-auto pr-1">
+                      {uploadFiles.map((file, index) => (
+                        <div key={`${file.name}-${file.size}-${file.lastModified}`} className="flex items-center justify-between gap-3 rounded-2xl bg-slate-50 px-3 py-2">
+                          <div className="min-w-0">
+                            <p className="truncate text-xs font-semibold text-slate-900">{file.name}</p>
+                            <p className="text-[11px] text-slate-500">{formatFileSize(file.size)}</p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setUploadFiles((c) => c.filter((_, i) => i !== index))}
+                            className="rounded-full border border-slate-200 px-2.5 py-1 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-50"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 <label className="block text-sm font-medium text-slate-700">
                   Additional guidelines
                   <textarea
@@ -340,6 +419,14 @@ export function AdminPage() {
                     className="rounded-full border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
                   >
                     {syncMutation.isPending ? "Syncing..." : "Sync sources"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => uploadMutation.mutate()}
+                    disabled={!selectedAgentId || uploadFiles.length === 0 || uploadMutation.isPending}
+                    className="rounded-full border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                  >
+                    {uploadMutation.isPending ? "Uploading..." : `Upload documents${uploadFiles.length > 0 ? ` (${uploadFiles.length})` : ""}`}
                   </button>
                   <button
                     type="button"

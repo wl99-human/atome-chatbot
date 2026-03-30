@@ -300,7 +300,7 @@ class SourceService:
             docs_to_delete = db.scalars(
                 select(KnowledgeDocument).where(
                     KnowledgeDocument.revision_id == revision.id,
-                    KnowledgeDocument.source_type != "correction",
+                    KnowledgeDocument.source_type.notin_(["correction", "upload"]),
                 )
             ).all()
         else:
