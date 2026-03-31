@@ -276,6 +276,86 @@ def test_generate_agent_coerces_non_string_blueprint_fields(monkeypatch) -> None
     assert payload["blueprint"]["enabled_tools"] == ["support_handoff"]
 
 
+def test_generate_agent_syncs_manager_kb_url(monkeypatch) -> None:
+    install_fixture_kb(monkeypatch)
+
+    response = client.post(
+        "/api/meta/generate-agent",
+        data={
+            "agent_name": "Manager KB Agent",
+            "description": "Uses the public KB URL during creation.",
+            "instructions": "Answer only from the configured KB.",
+            "knowledge_base_url": "https://help.atome.ph/hc/en-gb/categories/4439682039065-Atome-Card",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["agent"]["knowledge_base_url"] == "https://help.atome.ph/hc/en-gb/categories/4439682039065-Atome-Card"
+    assert payload["agent"]["sync_mode"] == "live_api"
+    assert payload["agent"]["fallback_used"] is False
+    assert payload["agent"]["documents_synced"] == 3
+    assert payload["agent"]["last_sync_warning"] is None
+
+
+def test_generate_agent_combines_manager_kb_url_and_uploaded_files(monkeypatch) -> None:
+    install_fixture_kb(monkeypatch)
+
+    response = client.post(
+        "/api/meta/generate-agent",
+        data={
+            "agent_name": "Hybrid Knowledge Agent",
+            "description": "Uses a KB URL and a manager upload.",
+            "instructions": "Use both the KB and uploaded notes.",
+            "knowledge_base_url": "https://help.atome.ph/hc/en-gb/categories/4439682039065-Atome-Card",
+        },
+        files=[
+            (
+                "files",
+                (
+                    "extra-guidance.txt",
+                    b"Escalate refund questions when a merchant confirms the charge was duplicated.",
+                    "text/plain",
+                ),
+            )
+        ],
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["agent"]["knowledge_base_url"] == "https://help.atome.ph/hc/en-gb/categories/4439682039065-Atome-Card"
+    assert payload["agent"]["sync_mode"] == "live_api"
+    assert payload["agent"]["fallback_used"] is False
+    assert payload["agent"]["documents_synced"] == 4
+    assert "kb url and manager-provided files" in payload["agent"]["source_summary"].lower()
+
+
+def test_generate_agent_keeps_manager_content_when_kb_sync_fails(monkeypatch) -> None:
+    def failing_get(url: str, timeout: int):
+        raise requests.HTTPError("blocked")
+
+    monkeypatch.setattr(source_service.session, "get", failing_get)
+
+    response = client.post(
+        "/api/meta/generate-agent",
+        data={
+            "agent_name": "Resilient Agent",
+            "description": "Falls back to manager input if the KB URL fails.",
+            "instructions": "Use the manager instructions when the KB is unavailable.",
+            "knowledge_base_url": "https://help.atome.ph/hc/en-gb/categories/4439682039065-Atome-Card",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["agent"]["knowledge_base_url"] == "https://help.atome.ph/hc/en-gb/categories/4439682039065-Atome-Card"
+    assert payload["agent"]["sync_mode"] == "manager_input"
+    assert payload["agent"]["fallback_used"] is False
+    assert payload["agent"]["documents_synced"] == 1
+    assert payload["agent"]["last_sync_warning"] is not None
+    assert "manager instructions" in payload["agent"]["source_summary"].lower()
+
+
 def test_generated_agents_do_not_use_lookup_flows(monkeypatch) -> None:
     monkeypatch.setattr(
         gemini_service,
@@ -310,6 +390,57 @@ def test_generated_agents_do_not_use_lookup_flows(monkeypatch) -> None:
     assert payload["intent"] != "application_status"
     assert payload["needs_followup"] is False
     assert payload["conversation"]["pending_action"] is None
+
+
+def test_uploaded_email_text_is_preserved_in_answer_and_citations(monkeypatch) -> None:
+    monkeypatch.setattr(
+        gemini_service,
+        "create_blueprint",
+        lambda **kwargs: {
+            "name": "IT Support Agent",
+            "description": "Handles internal IT knowledge.",
+            "instructions": "Answer only from uploaded knowledge.",
+            "knowledge_summary": "Password reset guidance for employees.",
+            "enabled_tools": ["support_handoff"],
+        },
+    )
+
+    generated = client.post(
+        "/api/meta/generate-agent",
+        data={
+            "agent_name": "IT Support Agent",
+            "description": "Handles internal IT knowledge.",
+            "instructions": "Answer only from uploaded knowledge.",
+        },
+        files=[
+            (
+                "files",
+                (
+                    "password-reset.txt",
+                    b"To reset your password, please contact the network admin at admin@example.com",
+                    "text/plain",
+                ),
+            )
+        ],
+    )
+    assert generated.status_code == 200
+    generated_payload = generated.json()
+
+    original_client = gemini_service.client
+    monkeypatch.setattr(gemini_service, "client", None)
+    try:
+        response = client.post(
+            f"/api/chat/{generated_payload['agent']['id']}",
+            json={"message": "How do I reset my password?"},
+        )
+    finally:
+        gemini_service.client = original_client
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "admin@example.com" in payload["message"]
+    assert payload["citations"]
+    assert "admin@example.com" in payload["citations"][0]["snippet"]
 
 
 def test_auto_fix_improves_future_faq_answers(monkeypatch) -> None:

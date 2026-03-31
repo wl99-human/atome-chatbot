@@ -327,6 +327,7 @@ async def generate_agent(
     agent_name: str = Form(...),
     description: str = Form(""),
     instructions: str = Form(""),
+    knowledge_base_url: str | None = Form(default=None),
     files: list[UploadFile] | None = File(default=None),
     db: Session = Depends(get_db),
 ) -> AgentCreateResponse:
@@ -341,6 +342,7 @@ async def generate_agent(
         agent_name=agent_name,
         description=description,
         instructions=instructions,
+        knowledge_base_url=knowledge_base_url,
         documents=parsed_documents,
     )
     return AgentCreateResponse(

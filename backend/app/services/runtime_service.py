@@ -90,6 +90,15 @@ class RuntimeService:
             return normalized[: sentence_end + 1].rstrip(". ")
         return normalized[:max_chars].rsplit(" ", 1)[0].rstrip(". ")
 
+    def _truncate_for_citation(self, content: str, max_chars: int) -> str:
+        normalized = normalize_whitespace(content)
+        if len(normalized) <= max_chars:
+            return normalized
+        truncated = normalized[:max_chars]
+        if " " not in truncated:
+            return truncated
+        return truncated.rsplit(" ", 1)[0]
+
     def get_active_agent_and_revision(self, db: Session, agent_id: str) -> tuple[Agent, AgentRevision]:
         agent = db.get(Agent, agent_id)
         if not agent:
@@ -268,7 +277,7 @@ class RuntimeService:
 
         bullets = []
         for index, item in enumerate(prioritized[:2]):
-            snippet = item.content[:260].rsplit(" ", 1)[0]
+            snippet = self._truncate_for_citation(item.content, 260)
             bullets.append(f"{snippet} [{index + 1}]")
         if not bullets:
             return (
@@ -290,7 +299,7 @@ class RuntimeService:
                     "label": f"[{label_index}]",
                     "title": item.title,
                     "source_url": item.source_url,
-                    "snippet": item.content[:220].rsplit(" ", 1)[0],
+                    "snippet": self._truncate_for_citation(item.content, 220),
                 }
             )
             label_index += 1

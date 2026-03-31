@@ -39,6 +39,7 @@ export function AppShell() {
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const searchText = searchParams.toString();
+  const hideAgentSidebar = location.pathname === "/manager";
   const bootstrapQuery = useQuery({
     queryKey: ["bootstrap"],
     queryFn: fetchBootstrap,
@@ -158,64 +159,71 @@ export function AppShell() {
           </nav>
         </header>
 
-        <div className="mt-1.5 grid min-h-0 flex-1 gap-3 overflow-hidden xl:grid-cols-[232px_minmax(0,1fr)]">
-          <aside className="min-h-0 overflow-y-auto pr-1">
-            <Card className="space-y-3 p-3">
-              <div>
-                <p className="font-mono text-[11px] uppercase tracking-[0.32em] text-slate-500">Active Agent</p>
-                <h2 className="mt-1 text-base font-semibold text-slate-950">Choose agent</h2>
-              </div>
-              <label className="block text-sm font-medium text-slate-700">
-                Agent
-                <select
-                  value={selectedAgentId}
-                  onChange={(event) => setSelectedAgentId(event.target.value)}
-                  className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400"
-                >
-                  {agents.map((agent) => (
-                    <option key={agent.id} value={agent.id}>
-                      {agent.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              {selectedAgent ? (
-                <div className="space-y-3">
-                  <div className="rounded-[18px] bg-slate-50 px-3 py-2.5">
-                    <p className="text-sm font-semibold text-slate-900">{selectedAgent.name}</p>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <StatusBadge tone="neutral">Revision {selectedAgent.active_revision_version ?? "n/a"}</StatusBadge>
-                    <StatusBadge tone={getSyncTone(selectedAgent.sync_mode, selectedAgent.fallback_used)}>
-                      {selectedAgent.sync_status}
-                    </StatusBadge>
-                  </div>
-                  <dl className="space-y-2 text-xs text-slate-600">
-                    <div className="flex items-center justify-between gap-3">
-                      <dt>Sync mode</dt>
-                      <dd className="font-medium text-slate-900">{selectedAgent.sync_mode}</dd>
-                    </div>
-                    <div className="flex items-center justify-between gap-3">
-                      <dt>Indexed docs</dt>
-                      <dd className="font-medium text-slate-900">{selectedAgent.documents_synced}</dd>
-                    </div>
-                    <div className="flex items-center justify-between gap-3">
-                      <dt>Indexed chunks</dt>
-                      <dd className="font-medium text-slate-900">{selectedAgent.chunks_synced}</dd>
-                    </div>
-                  </dl>
-                  {selectedAgent.last_sync_warning ? (
-                    <div className="rounded-[18px] border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">
-                      {selectedAgent.last_sync_warning}
-                    </div>
-                  ) : null}
+        <div
+          className={classNames(
+            "mt-1.5 grid min-h-0 flex-1 overflow-hidden",
+            hideAgentSidebar ? "grid-cols-1" : "gap-3 xl:grid-cols-[232px_minmax(0,1fr)]",
+          )}
+        >
+          {hideAgentSidebar ? null : (
+            <aside className="min-h-0 overflow-y-auto pr-1">
+              <Card className="space-y-3 p-3">
+                <div>
+                  <p className="font-mono text-[11px] uppercase tracking-[0.32em] text-slate-500">Active Agent</p>
+                  <h2 className="mt-1 text-base font-semibold text-slate-950">Choose agent</h2>
                 </div>
-              ) : (
-                <p className="text-sm text-slate-500">No agent is available yet.</p>
-              )}
-            </Card>
-          </aside>
+                <label className="block text-sm font-medium text-slate-700">
+                  Agent
+                  <select
+                    value={selectedAgentId}
+                    onChange={(event) => setSelectedAgentId(event.target.value)}
+                    className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-400"
+                  >
+                    {agents.map((agent) => (
+                      <option key={agent.id} value={agent.id}>
+                        {agent.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                {selectedAgent ? (
+                  <div className="space-y-3">
+                    <div className="rounded-[18px] bg-slate-50 px-3 py-2.5">
+                      <p className="text-sm font-semibold text-slate-900">{selectedAgent.name}</p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <StatusBadge tone="neutral">Revision {selectedAgent.active_revision_version ?? "n/a"}</StatusBadge>
+                      <StatusBadge tone={getSyncTone(selectedAgent.sync_mode, selectedAgent.fallback_used)}>
+                        {selectedAgent.sync_status}
+                      </StatusBadge>
+                    </div>
+                    <dl className="space-y-2 text-xs text-slate-600">
+                      <div className="flex items-center justify-between gap-3">
+                        <dt>Sync mode</dt>
+                        <dd className="font-medium text-slate-900">{selectedAgent.sync_mode}</dd>
+                      </div>
+                      <div className="flex items-center justify-between gap-3">
+                        <dt>Indexed docs</dt>
+                        <dd className="font-medium text-slate-900">{selectedAgent.documents_synced}</dd>
+                      </div>
+                      <div className="flex items-center justify-between gap-3">
+                        <dt>Indexed chunks</dt>
+                        <dd className="font-medium text-slate-900">{selectedAgent.chunks_synced}</dd>
+                      </div>
+                    </dl>
+                    {selectedAgent.last_sync_warning ? (
+                      <div className="rounded-[18px] border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">
+                        {selectedAgent.last_sync_warning}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : (
+                  <p className="text-sm text-slate-500">No agent is available yet.</p>
+                )}
+              </Card>
+            </aside>
+          )}
 
           <main className="min-h-0 min-w-0 overflow-hidden">
             <Outlet

@@ -35,11 +35,13 @@ export function ManagerPage() {
   const [instructions, setInstructions] = useState(
     "Answer only from uploaded knowledge. Ask follow-up questions before using any enabled account lookup tool.",
   );
+  const [knowledgeBaseUrl, setKnowledgeBaseUrl] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [dragActive, setDragActive] = useState(false);
   const [latestBlueprint, setLatestBlueprint] = useState<Blueprint | null>(null);
   const [managerError, setManagerError] = useState("");
   const [generatedAgentId, setGeneratedAgentId] = useState<string | null>(null);
+  const [generationWarning, setGenerationWarning] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const generateMutation = useMutation({
@@ -47,16 +49,19 @@ export function ManagerPage() {
     onSuccess: async (response) => {
       setLatestBlueprint(response.blueprint ?? null);
       setGeneratedAgentId(response.agent.id);
+      setGenerationWarning(response.agent.last_sync_warning ?? "");
       setSelectedAgentId(response.agent.id);
       setManagerError("");
       await queryClient.invalidateQueries({ queryKey: ["bootstrap"] });
       showToast({
-        title: "Agent generated",
-        description: `${response.agent.name} is ready to test in the customer view.`,
-        tone: "success",
+        title: response.agent.last_sync_warning ? "Agent generated with warning" : "Agent generated",
+        description: response.agent.last_sync_warning || `${response.agent.name} is ready to test in the customer view.`,
+        tone: response.agent.last_sync_warning ? "warning" : "success",
       });
     },
     onError: (error: Error) => {
+      setGeneratedAgentId(null);
+      setGenerationWarning("");
       setManagerError(error.message || "Agent generation failed.");
     },
   });
@@ -85,10 +90,15 @@ export function ManagerPage() {
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setManagerError("");
+    setGeneratedAgentId(null);
+    setGenerationWarning("");
     const formData = new FormData();
     formData.append("agent_name", agentName);
     formData.append("description", description);
     formData.append("instructions", instructions);
+    if (knowledgeBaseUrl.trim()) {
+      formData.append("knowledge_base_url", knowledgeBaseUrl.trim());
+    }
     files.forEach((file) => formData.append("files", file));
     await generateMutation.mutateAsync(formData);
   }
@@ -108,11 +118,20 @@ export function ManagerPage() {
         ) : null}
 
         {generatedAgentId ? (
-          <InlineAlert tone="success" title="Agent generated" className="py-2.5">
+          <InlineAlert
+            tone={generationWarning ? "warning" : "success"}
+            title={generationWarning ? "Agent generated with warning" : "Agent generated"}
+            className="py-2.5"
+          >
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <p className="text-sm leading-5">
-                The generated agent is ready. Open it in customer view or keep refining the manager inputs.
-              </p>
+              <div className="space-y-1">
+                <p className="text-sm leading-5">
+                  {generationWarning
+                    ? "The generated agent is ready, but the live knowledge base sync did not complete."
+                    : "The generated agent is ready. Open it in customer view or keep refining the manager inputs."}
+                </p>
+                {generationWarning ? <p className="text-xs leading-5 text-amber-900">{generationWarning}</p> : null}
+              </div>
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
@@ -123,7 +142,10 @@ export function ManagerPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setGeneratedAgentId(null)}
+                  onClick={() => {
+                    setGeneratedAgentId(null);
+                    setGenerationWarning("");
+                  }}
                   className="rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
                 >
                   Keep editing
@@ -193,6 +215,16 @@ export function ManagerPage() {
                 </div>
               </div>
 
+              <label className="block text-sm font-medium text-slate-700">
+                Knowledge base URL
+                <input
+                  value={knowledgeBaseUrl}
+                  onChange={(event) => setKnowledgeBaseUrl(event.target.value)}
+                  placeholder="https://help.atome.ph/hc/en-gb/categories/..."
+                  className="mt-2 w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-slate-400"
+                />
+              </label>
+
               <div
                 onDragOver={(event) => {
                   event.preventDefault();
@@ -213,7 +245,9 @@ export function ManagerPage() {
                   className="hidden"
                 />
                 <p className="text-xs font-semibold text-slate-900">Drag files here or browse from disk</p>
-                <p className="mt-0.5 text-[11px] text-slate-500">Uses the document types already supported by the backend parser.</p>
+                <p className="mt-0.5 text-[11px] text-slate-500">
+                  Uses the document types already supported by the backend parser. You can use a KB URL, files, or both.
+                </p>
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
