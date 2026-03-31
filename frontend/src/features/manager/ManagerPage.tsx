@@ -128,7 +128,7 @@ export function ManagerPage() {
                 <p className="text-sm leading-5">
                   {generationWarning
                     ? "The generated agent is ready, but the live knowledge base sync did not complete."
-                    : "The generated agent is ready. Open it in customer view or keep refining the manager inputs."}
+                    : "The generated agent is ready. Open it in customer view or continue editing it in Admin."}
                 </p>
                 {generationWarning ? <p className="text-xs leading-5 text-amber-900">{generationWarning}</p> : null}
               </div>
@@ -142,10 +142,7 @@ export function ManagerPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    setGeneratedAgentId(null);
-                    setGenerationWarning("");
-                  }}
+                  onClick={() => navigate({ pathname: "/admin", search: `?agent=${generatedAgentId}&panel=overview` })}
                   className="rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
                 >
                   Keep editing
