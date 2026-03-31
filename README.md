@@ -16,14 +16,16 @@ This repo implements a Python-first customer service bot plus a manager-facing m
 - Admin UI to:
   - edit the knowledge base URL
   - edit additional guidelines
+  - upload supplementary or replacement knowledge documents
   - publish a new revision
   - re-sync sources
   - review reported mistakes
   - trigger auto-fix
+  - reset or delete agents
 - Manager UI to:
   - upload docs
   - provide instructions
-  - generate a new customer service agent
+  - generate a new customer service agent or update an existing one
 - Issue reporting and self-fix workflow:
   - report a bad answer from the chat UI
   - diagnose the issue type
