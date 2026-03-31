@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Agent, AgentRevision, FixAttempt, IssueReport, Message, ReplayResult
@@ -98,6 +99,8 @@ class IssueService:
         target_revision = db.get(AgentRevision, issue.revision_id)
         if not target_revision:
             raise ValueError("Target revision not found.")
+        agent = db.get(Agent, issue.agent_id)
+        requires_review = bool(agent and agent.role == "generated")
 
         prompt_text, answer_text = self._issue_prompt_and_answer(db, issue)
         expected_behavior = issue.customer_note or issue.diagnosis_summary
@@ -163,7 +166,7 @@ class IssueService:
             patch_type=patch_type,
             patch_summary=replay_reason,
             replay_passed=replay_passed,
-            auto_published=replay_passed,
+            auto_published=replay_passed and not requires_review,
         )
         db.add(fix_attempt)
         db.flush()
@@ -178,12 +181,13 @@ class IssueService:
         )
 
         if replay_passed:
-            agent = db.get(Agent, issue.agent_id)
-            if agent:
+            if agent and not requires_review:
                 agent.active_revision_id = candidate_revision.id
-            issue.status = "archived"
+                issue.status = "archived"
+            else:
+                issue.status = "validated_pending_review"
         else:
-            issue.status = "open"
+            issue.status = "proposed_fix"
         db.commit()
         db.refresh(fix_attempt)
         db.refresh(issue)
@@ -192,6 +196,44 @@ class IssueService:
             "fix_attempt": fix_attempt,
             "replay_answer": replay.message,
         }
+
+    def approve_fix(self, db: Session, issue_id: str) -> IssueReport:
+        issue = db.get(IssueReport, issue_id)
+        if not issue:
+            raise ValueError("Issue not found.")
+        fix_attempt = db.scalar(
+            select(FixAttempt)
+            .where(FixAttempt.issue_id == issue_id)
+            .order_by(FixAttempt.created_at.desc())
+        )
+        if not fix_attempt:
+            raise ValueError("No fix attempt is available for review.")
+        if not fix_attempt.replay_passed:
+            raise ValueError("The latest fix attempt did not pass replay validation.")
+        agent = db.get(Agent, issue.agent_id)
+        if not agent:
+            raise ValueError("Agent not found.")
+        agent.active_revision_id = fix_attempt.candidate_revision_id
+        issue.status = "published"
+        db.commit()
+        db.refresh(issue)
+        return issue
+
+    def reject_fix(self, db: Session, issue_id: str) -> IssueReport:
+        issue = db.get(IssueReport, issue_id)
+        if not issue:
+            raise ValueError("Issue not found.")
+        fix_attempt = db.scalar(
+            select(FixAttempt)
+            .where(FixAttempt.issue_id == issue_id)
+            .order_by(FixAttempt.created_at.desc())
+        )
+        if not fix_attempt:
+            raise ValueError("No fix attempt is available for rejection.")
+        issue.status = "rejected"
+        db.commit()
+        db.refresh(issue)
+        return issue
 
     def _diagnose(
         self,

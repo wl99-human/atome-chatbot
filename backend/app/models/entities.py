@@ -191,3 +191,54 @@ class AgentBlueprint(Base):
     enabled_tools_json: Mapped[list] = mapped_column(SQLiteJSON, default=list)
     created_agent_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class MetaSession(Base):
+    __tablename__ = "meta_sessions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    status: Mapped[str] = mapped_column(String(30), default="draft")
+    target_agent_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_agent_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    draft_spec_json: Mapped[dict] = mapped_column(SQLiteJSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+    messages: Mapped[list["MetaMessage"]] = relationship(
+        back_populates="session", cascade="all, delete-orphan", order_by="MetaMessage.created_at"
+    )
+    documents: Mapped[list["MetaDocument"]] = relationship(
+        back_populates="session", cascade="all, delete-orphan"
+    )
+
+
+class MetaMessage(Base):
+    __tablename__ = "meta_messages"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    session_id: Mapped[str] = mapped_column(ForeignKey("meta_sessions.id", ondelete="CASCADE"))
+    role: Mapped[str] = mapped_column(String(30))
+    content: Mapped[str] = mapped_column(Text)
+    payload_json: Mapped[dict] = mapped_column(SQLiteJSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    session: Mapped["MetaSession"] = relationship(back_populates="messages")
+
+
+class MetaDocument(Base):
+    __tablename__ = "meta_documents"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    session_id: Mapped[str] = mapped_column(ForeignKey("meta_sessions.id", ondelete="CASCADE"))
+    title: Mapped[str] = mapped_column(String(500))
+    source_type: Mapped[str] = mapped_column(String(50), default="upload")
+    filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    mime_type: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    content: Mapped[str] = mapped_column(Text)
+    checksum: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    payload_json: Mapped[dict] = mapped_column(SQLiteJSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    session: Mapped["MetaSession"] = relationship(back_populates="documents")

@@ -41,6 +41,23 @@ export type ConversationSummary = {
   updated_at: string;
 };
 
+export type ConversationMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  citations: Citation[];
+  created_at: string;
+};
+
+export type ConversationDetail = {
+  id: string;
+  agent_id: string;
+  revision_id: string;
+  pending_action?: string | null;
+  updated_at: string;
+  messages: ConversationMessage[];
+};
+
 export type ChatResponse = {
   conversation_id: string;
   assistant_message_id: string;
@@ -91,6 +108,52 @@ export type Blueprint = {
 };
 
 export type AgentCreateResponse = {
+  agent: Agent;
+  blueprint?: Blueprint | null;
+};
+
+export type MetaDraftSpec = {
+  name: string;
+  description: string;
+  behavior_instructions: string;
+  response_style: string;
+  allowed_scope: string;
+  fallback_behavior: string;
+  knowledge_summary: string;
+  open_questions: string[];
+  status: string;
+};
+
+export type MetaSessionMessage = {
+  id: string;
+  role: "manager" | "assistant";
+  content: string;
+  created_at: string;
+};
+
+export type MetaSessionDocument = {
+  id: string;
+  title: string;
+  filename?: string | null;
+  mime_type?: string | null;
+  content_preview: string;
+  created_at: string;
+};
+
+export type MetaSession = {
+  id: string;
+  status: string;
+  target_agent_id?: string | null;
+  created_agent_id?: string | null;
+  draft_spec: MetaDraftSpec;
+  messages: MetaSessionMessage[];
+  documents: MetaSessionDocument[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type MetaGenerateResponse = {
+  session: MetaSession;
   agent: Agent;
   blueprint?: Blueprint | null;
 };

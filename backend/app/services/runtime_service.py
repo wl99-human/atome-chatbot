@@ -10,7 +10,7 @@ from app.schemas.api import ChatRequest
 from app.services.gemini_service import gemini_service
 from app.services.retrieval_service import RetrievedChunk, retrieval_service
 from app.services.tool_service import get_application_status, get_card_transaction_status
-from app.utils.text import normalize_whitespace
+from app.utils.text import normalize_whitespace, tokenize
 
 
 APPLICATION_REF_RE = re.compile(r"\b(?:APP[- ]?)?[A-Z0-9]{6,}\b", re.IGNORECASE)
@@ -41,6 +41,33 @@ GENERAL_FAQ_PREFIXES = (
     "where can i",
     "can i",
 )
+SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+|\s*\n+\s*")
+FALLBACK_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "can",
+    "do",
+    "does",
+    "for",
+    "how",
+    "i",
+    "if",
+    "in",
+    "is",
+    "it",
+    "my",
+    "of",
+    "or",
+    "the",
+    "to",
+    "what",
+    "when",
+    "where",
+    "why",
+    "you",
+}
 
 
 @dataclass
@@ -98,6 +125,198 @@ class RuntimeService:
         if " " not in truncated:
             return truncated
         return truncated.rsplit(" ", 1)[0]
+
+    def _split_into_sentences(self, content: str) -> list[str]:
+        return [
+            normalize_whitespace(part)
+            for part in SENTENCE_SPLIT_RE.split(content or "")
+            if normalize_whitespace(part)
+        ]
+
+    def _strip_title_prefix(self, sentence: str, title: str | None) -> str:
+        normalized_sentence = normalize_whitespace(sentence)
+        normalized_title = normalize_whitespace(title or "").rstrip(":.- ")
+        if not normalized_title:
+            return normalized_sentence
+
+        lowered_sentence = normalized_sentence.lower()
+        lowered_title = normalized_title.lower()
+        if lowered_sentence == lowered_title:
+            return ""
+
+        for separator in (": ", " - ", " ", "\n"):
+            prefix = f"{normalized_title}{separator}"
+            if lowered_sentence.startswith(prefix.lower()):
+                return normalize_whitespace(normalized_sentence[len(prefix) :])
+        return normalized_sentence
+
+    def _is_heading_like_sentence(self, sentence: str) -> bool:
+        if any(mark in sentence for mark in ".!?"):
+            return False
+        tokens = tokenize(sentence)
+        return 0 < len(tokens) <= 6
+
+    def _strip_heading_prefix(self, sentence: str) -> str:
+        words = sentence.split()
+        uppercase_prefix_count = 0
+        for word in words:
+            alpha = next((char for char in word if char.isalpha()), "")
+            if alpha and alpha.isupper():
+                uppercase_prefix_count += 1
+                continue
+            break
+        if uppercase_prefix_count >= 3:
+            return " ".join(words[uppercase_prefix_count - 1 :])
+        return sentence
+
+    def _prepare_sentence_candidate(self, sentence: str, title: str | None) -> str:
+        cleaned = self._strip_heading_prefix(self._strip_title_prefix(sentence, title))
+        if not cleaned or self._is_heading_like_sentence(cleaned):
+            return ""
+        return cleaned
+
+    def _meaningful_query_tokens(self, message_text: str) -> list[str]:
+        return [
+            token
+            for token in tokenize(message_text)
+            if token not in FALLBACK_STOPWORDS and (len(token) > 2 or token.isdigit())
+        ]
+
+    def _query_phrases(self, query_tokens: list[str]) -> set[str]:
+        return {
+            f"{query_tokens[index]} {query_tokens[index + 1]}"
+            for index in range(len(query_tokens) - 1)
+        }
+
+    def _sentence_match_score(
+        self,
+        sentence: str,
+        *,
+        query_tokens: list[str],
+        query_phrases: set[str],
+    ) -> float:
+        sentence_tokens = tokenize(sentence)
+        if not sentence_tokens:
+            return 0.0
+        sentence_token_set = set(sentence_tokens)
+        score = 0.0
+        for token in query_tokens:
+            if token in sentence_token_set:
+                score += 2.0
+                score += min(sentence_tokens.count(token) - 1, 1) * 0.35
+        lowered_sentence = sentence.lower()
+        for phrase in query_phrases:
+            if phrase in lowered_sentence:
+                score += 2.5
+        if len(sentence) <= 180:
+            score += 0.25
+        return score
+
+    def _should_include_second_sentence(
+        self,
+        message_text: str,
+        *,
+        first_score: float,
+        second_score: float,
+        first_sentence: str,
+    ) -> bool:
+        lowered = normalize_whitespace(message_text.lower())
+        if lowered.startswith(("how ", "what happens", "where ", "when ", "can i ", "do i ", "does ")):
+            return False
+        if len(first_sentence) < 72 and second_score >= max(2.0, first_score * 0.8):
+            return True
+        return second_score >= max(3.5, first_score * 0.9)
+
+    def _select_sentence_level_candidates(
+        self,
+        *,
+        message_text: str,
+        labeled_items: list[tuple[int, RetrievedChunk]],
+    ) -> list[dict]:
+        query_tokens = self._meaningful_query_tokens(message_text)
+        if not query_tokens:
+            return []
+        query_phrases = self._query_phrases(query_tokens)
+        candidates: list[dict] = []
+        for label_index, item in labeled_items:
+            for sentence in self._split_into_sentences(item.content):
+                cleaned_sentence = self._prepare_sentence_candidate(sentence, item.title)
+                if not cleaned_sentence:
+                    continue
+                score = self._sentence_match_score(
+                    cleaned_sentence,
+                    query_tokens=query_tokens,
+                    query_phrases=query_phrases,
+                )
+                if score <= 0:
+                    continue
+                candidates.append(
+                    {
+                        "label": label_index,
+                        "sentence": cleaned_sentence,
+                        "score": score,
+                    }
+                )
+        if not candidates:
+            return []
+        candidates.sort(key=lambda item: (-item["score"], len(item["sentence"]), item["label"]))
+
+        selected = [candidates[0]]
+        if len(candidates) > 1 and self._should_include_second_sentence(
+            message_text,
+            first_score=candidates[0]["score"],
+            second_score=candidates[1]["score"],
+            first_sentence=candidates[0]["sentence"],
+        ):
+            second_candidate = candidates[1]
+            if second_candidate["sentence"].lower() != candidates[0]["sentence"].lower():
+                selected.append(second_candidate)
+        return selected
+
+    def _format_sentence_level_answer(
+        self,
+        selected: list[dict],
+        *,
+        instruction_bundle: dict[str, str],
+    ) -> str | None:
+        if not selected:
+            return None
+        response = " ".join(
+            f"{candidate['sentence'].rstrip('. ')}. [{candidate['label']}]"
+            for candidate in selected
+        )
+        if "formal" in instruction_bundle.get("response_style", "").lower():
+            return f"Verified guidance: {response}"
+        return response
+
+    def _compose_sentence_level_fallback(
+        self,
+        *,
+        message_text: str,
+        prioritized: list[RetrievedChunk],
+        instruction_bundle: dict[str, str],
+    ) -> str | None:
+        selected = self._select_sentence_level_candidates(
+            message_text=message_text,
+            labeled_items=list(enumerate(prioritized[:3], start=1)),
+        )
+        return self._format_sentence_level_answer(selected, instruction_bundle=instruction_bundle)
+
+    def _render_fallback_message(self, instruction_bundle: dict[str, str]) -> str:
+        fallback_behavior = normalize_whitespace(
+            instruction_bundle.get("fallback_behavior")
+            or "The current documents do not confirm that."
+        )
+        lowered = fallback_behavior.lower()
+
+        if fallback_behavior and not lowered.startswith(("if ", "when ", "say ", "respond ", "ask ", "tell ")):
+            message = fallback_behavior
+        else:
+            message = "The current documents do not confirm that."
+
+        if "contact support" in lowered and "contact support" not in message.lower():
+            message = f"{message.rstrip('. ')}. Please contact support for more help."
+        return message
 
     def get_active_agent_and_revision(self, db: Session, agent_id: str) -> tuple[Agent, AgentRevision]:
         agent = db.get(Agent, agent_id)
@@ -219,12 +438,10 @@ class RuntimeService:
 
         retrieved = retrieval_service.search(db, revision.id, message_text, limit=5)
         if not retrieved:
+            instruction_bundle = self._get_instruction_bundle(revision)
             return ReplyResult(
                 intent="unknown",
-                message=(
-                    "I couldn't verify that from the current knowledge sources. "
-                    "Please try rephrasing the question or report the mistake so it can be reviewed."
-                ),
+                message=self._render_fallback_message(instruction_bundle),
                 citations=[],
             )
         answer = self._answer_from_retrieval(revision, message_text, history, retrieved)
@@ -234,9 +451,22 @@ class RuntimeService:
     def _supports_lookup_tools(self, agent: Agent | None) -> bool:
         return bool(agent and agent.role == "support")
 
+    def _get_instruction_bundle(self, revision: AgentRevision) -> dict[str, str]:
+        payload = dict(revision.payload_json or {})
+        bundle = dict(payload.get("instruction_bundle") or {})
+        if bundle:
+            return bundle
+        return {
+            "behavior_instructions": normalize_whitespace(revision.additional_guidelines),
+            "response_style": "Be friendly, concise, and practical.",
+            "allowed_scope": "Answer only from the uploaded or synced knowledge sources.",
+            "fallback_behavior": "If the answer is not supported by the current knowledge, say that clearly.",
+            "citation_policy": "Use inline citations that match the retrieved sources.",
+        }
+
     def _answer_from_retrieval(
         self,
-        _revision: AgentRevision,
+        revision: AgentRevision,
         message_text: str,
         history: list[dict[str, str]],
         retrieved: list[RetrievedChunk],
@@ -252,10 +482,14 @@ class RuntimeService:
             }
             for index, item in enumerate(prioritized[:4])
         ]
+        instruction_bundle = self._get_instruction_bundle(revision)
+        agent = revision.agent
         model_answer = gemini_service.answer_kb_from_context(
             user_message=message_text,
             history=history,
             context_blocks=context_blocks,
+            agent_name=agent.name if agent else "customer service assistant",
+            instruction_bundle=instruction_bundle,
         )
         if model_answer:
             return model_answer
@@ -266,25 +500,40 @@ class RuntimeService:
             correction_text = self._extract_correction_sentence(correction_item.content)
             if correction_text:
                 correction_label = prioritized.index(correction_item) + 1
+                support_answer = self._format_sentence_level_answer(
+                    self._select_sentence_level_candidates(
+                        message_text=message_text,
+                        labeled_items=[
+                            (index + 1, item)
+                            for index, item in enumerate(prioritized[:4])
+                            if item.source_type != "correction"
+                        ],
+                    ),
+                    instruction_bundle=instruction_bundle,
+                )
+                if support_answer:
+                    if correction_text.lower() in support_answer.lower():
+                        return support_answer
+                    return f"{support_answer} {correction_text.rstrip('. ')}. [{correction_label}]"
                 if supporting_item:
                     support_label = prioritized.index(supporting_item) + 1
-                    support_snippet = self._summarize_content(supporting_item.content)
+                    support_snippet = self._summarize_content(
+                        self._strip_title_prefix(supporting_item.content, supporting_item.title)
+                    )
                     return (
                         f"{support_snippet}. [{support_label}] "
                         f"{correction_text.rstrip('. ')}. [{correction_label}]"
                     )
                 return f"{correction_text.rstrip('. ')}. [{correction_label}]"
 
-        bullets = []
-        for index, item in enumerate(prioritized[:2]):
-            snippet = self._truncate_for_citation(item.content, 260)
-            bullets.append(f"{snippet} [{index + 1}]")
-        if not bullets:
-            return (
-                "I couldn't verify that from the current knowledge sources. "
-                "Please try rephrasing the question."
-            )
-        return "Here's what I found from the available knowledge base:\n- " + "\n- ".join(bullets)
+        sentence_level_answer = self._compose_sentence_level_fallback(
+            message_text=message_text,
+            prioritized=prioritized,
+            instruction_bundle=instruction_bundle,
+        )
+        if sentence_level_answer:
+            return sentence_level_answer
+        return self._render_fallback_message(instruction_bundle)
 
     def _build_citations(self, retrieved: list[RetrievedChunk]) -> list[dict]:
         citations: list[dict] = []

@@ -3,7 +3,10 @@ import type {
   AgentCreateResponse,
   BootstrapResponse,
   ChatResponse,
+  ConversationDetail,
   Issue,
+  MetaGenerateResponse,
+  MetaSession,
   SyncResponse,
 } from "../types/api";
 
@@ -58,6 +61,10 @@ export function sendChat(agentId: string, payload: { message: string; conversati
   });
 }
 
+export function fetchConversation(conversationId: string) {
+  return request<ConversationDetail>(`/conversations/${conversationId}`);
+}
+
 export function publishAgent(
   agentId: string,
   payload: { name?: string; description?: string; knowledge_base_url?: string; additional_guidelines: string },
@@ -89,10 +96,79 @@ export function autoFixIssue(issueId: string) {
   });
 }
 
+export function approveFix(issueId: string) {
+  return request<Issue>(`/issues/${issueId}/approve-fix`, {
+    method: "POST",
+  });
+}
+
+export function rejectFix(issueId: string) {
+  return request<Issue>(`/issues/${issueId}/reject-fix`, {
+    method: "POST",
+  });
+}
+
 export function generateAgent(formData: FormData) {
   return request<AgentCreateResponse>("/meta/generate-agent", {
     method: "POST",
     body: formData,
+  });
+}
+
+export function createMetaSession(payload: { target_agent_id?: string | null }) {
+  return request<MetaSession>("/meta/sessions", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function fetchMetaSession(sessionId: string) {
+  return request<MetaSession>(`/meta/sessions/${sessionId}`);
+}
+
+export function sendMetaMessage(sessionId: string, payload: { message: string }) {
+  return request<MetaSession>(`/meta/sessions/${sessionId}/messages`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateMetaSessionDraft(
+  sessionId: string,
+  payload: {
+    name?: string;
+    description?: string;
+    behavior_instructions?: string;
+    response_style?: string;
+    allowed_scope?: string;
+    fallback_behavior?: string;
+  },
+) {
+  return request<MetaSession>(`/meta/sessions/${sessionId}/draft-spec`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function uploadMetaSessionDocuments(sessionId: string, files: File[]) {
+  const formData = new FormData();
+  files.forEach((file) => formData.append("files", file));
+  return request<MetaSession>(`/meta/sessions/${sessionId}/documents`, {
+    method: "POST",
+    body: formData,
+  });
+}
+
+export function generateFromMetaSession(sessionId: string) {
+  return request<MetaGenerateResponse>(`/meta/sessions/${sessionId}/generate`, {
+    method: "POST",
+  });
+}
+
+export function updateAgentFromMetaSession(sessionId: string, payload: { target_agent_id: string }) {
+  return request<MetaGenerateResponse>(`/meta/sessions/${sessionId}/update-agent`, {
+    method: "POST",
+    body: JSON.stringify(payload),
   });
 }
 

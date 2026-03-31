@@ -8,6 +8,9 @@ from app.models.entities import (
     KnowledgeChunk,
     KnowledgeDocument,
     Message,
+    MetaDocument,
+    MetaMessage,
+    MetaSession,
     ReplayResult,
 )
 
@@ -21,5 +24,8 @@ __all__ = [
     "KnowledgeChunk",
     "KnowledgeDocument",
     "Message",
+    "MetaDocument",
+    "MetaMessage",
+    "MetaSession",
     "ReplayResult",
 ]

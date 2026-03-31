@@ -2,7 +2,17 @@ import { useEffect, useRef, useState, type DragEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 
-import { autoFixIssue, deleteAgent, fetchIssues, publishAgent, resetAgent, syncAgent, uploadAgentDocuments } from "../../api/client";
+import {
+  approveFix,
+  autoFixIssue,
+  deleteAgent,
+  fetchIssues,
+  publishAgent,
+  rejectFix,
+  resetAgent,
+  syncAgent,
+  uploadAgentDocuments,
+} from "../../api/client";
 import { Card } from "../../components/ui/Card";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { InlineAlert } from "../../components/ui/InlineAlert";
@@ -13,7 +23,7 @@ import { useAppShell } from "../../layout/AppShell";
 import { classNames, formatFileSize, formatTimestamp, getIssueStatusTone, getSyncTone, mergeFiles } from "../../lib/utils";
 
 type AdminTab = "overview" | "issues";
-type StatusFilter = "open" | "archived" | "all";
+type StatusFilter = "open" | "review" | "resolved" | "all";
 
 export function AdminPage() {
   const queryClient = useQueryClient();
@@ -35,6 +45,7 @@ export function AdminPage() {
   const [uploadFiles, setUploadFiles] = useState<File[]>([]);
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const generatedAgent = selectedAgent?.role === "generated";
 
   const activeTab: AdminTab = searchParams.get("panel") === "issues" ? "issues" : "overview";
 
@@ -49,7 +60,7 @@ export function AdminPage() {
     }
     setName(selectedAgent.name);
     setDescription(selectedAgent.description);
-    setKnowledgeBaseUrl(selectedAgent.knowledge_base_url ?? "");
+    setKnowledgeBaseUrl(selectedAgent.role === "generated" ? "" : (selectedAgent.knowledge_base_url ?? ""));
     setGuidelines(selectedAgent.additional_guidelines ?? "");
     setOverviewNotice(null);
     setUploadFiles([]);
@@ -60,14 +71,17 @@ export function AdminPage() {
       publishAgent(selectedAgentId, {
         name,
         description,
-        knowledge_base_url: knowledgeBaseUrl,
+        knowledge_base_url: generatedAgent ? undefined : knowledgeBaseUrl,
         additional_guidelines: guidelines,
       }),
     onSuccess: async (agent) => {
       setOverviewNotice({
         tone: "success",
         title: "Revision published",
-        message: `${agent.name} is now on revision ${agent.active_revision_version ?? "n/a"} with a refreshed source snapshot.`,
+        message:
+          agent.role === "generated"
+            ? `${agent.name} is now on revision ${agent.active_revision_version ?? "n/a"} with its uploaded knowledge preserved.`
+            : `${agent.name} is now on revision ${agent.active_revision_version ?? "n/a"} with a refreshed source snapshot.`,
       });
       await queryClient.invalidateQueries({ queryKey: ["bootstrap"] });
       showToast({
@@ -131,13 +145,57 @@ export function AdminPage() {
     },
   });
 
+  const approveFixMutation = useMutation({
+    mutationFn: (issueId: string) => approveFix(issueId),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["issues"] }),
+        queryClient.invalidateQueries({ queryKey: ["bootstrap"] }),
+      ]);
+      showToast({
+        title: "Fix published",
+        description: "The validated revision is now active for this agent.",
+        tone: "success",
+      });
+    },
+    onError: (error: Error) => {
+      showToast({
+        title: "Publish failed",
+        description: error.message,
+        tone: "danger",
+      });
+    },
+  });
+
+  const rejectFixMutation = useMutation({
+    mutationFn: (issueId: string) => rejectFix(issueId),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["issues"] });
+      showToast({
+        title: "Fix rejected",
+        description: "The candidate revision stayed unpublished.",
+        tone: "warning",
+      });
+    },
+    onError: (error: Error) => {
+      showToast({
+        title: "Reject failed",
+        description: error.message,
+        tone: "danger",
+      });
+    },
+  });
+
   const resetMutation = useMutation({
     mutationFn: () => resetAgent(selectedAgentId),
     onSuccess: async (agent) => {
       setOverviewNotice({
         tone: "success",
         title: "Agent reset to v1",
-        message: `${agent.name} has been reset to revision 1 with a fresh knowledge sync.`,
+        message:
+          agent.role === "generated"
+            ? `${agent.name} has been reset to revision 1 using its original uploaded documents.`
+            : `${agent.name} has been reset to revision 1 with a fresh knowledge sync.`,
       });
       await queryClient.invalidateQueries({ queryKey: ["bootstrap"] });
       showToast({
@@ -211,7 +269,7 @@ export function AdminPage() {
     !!selectedAgent &&
     (name !== selectedAgent.name ||
       description !== selectedAgent.description ||
-      knowledgeBaseUrl !== (selectedAgent.knowledge_base_url ?? "") ||
+      (!generatedAgent && knowledgeBaseUrl !== (selectedAgent.knowledge_base_url ?? "")) ||
       guidelines !== selectedAgent.additional_guidelines);
 
   const issues =
@@ -219,10 +277,13 @@ export function AdminPage() {
       if (statusFilter === "all") {
         return true;
       }
-      if (statusFilter === "archived") {
-        return issue.status === "archived";
+      if (statusFilter === "review") {
+        return issue.status === "validated_pending_review";
       }
-      return issue.status !== "archived";
+      if (statusFilter === "resolved") {
+        return issue.status === "archived" || issue.status === "published" || issue.status === "rejected";
+      }
+      return issue.status !== "archived" && issue.status !== "published" && issue.status !== "rejected";
     }) ?? [];
 
   if (!selectedAgent) {
@@ -313,7 +374,11 @@ export function AdminPage() {
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <h2 className="text-lg font-semibold text-slate-950">Edit revision inputs</h2>
-                    <p className="mt-0.5 text-[11px] leading-4 text-slate-500">Update the KB URL or guidelines, then publish.</p>
+                    <p className="mt-0.5 text-[11px] leading-4 text-slate-500">
+                      {generatedAgent
+                        ? "Update uploaded-document behavior and guidelines, then publish."
+                        : "Update the KB URL or guidelines, then publish."}
+                    </p>
                   </div>
                   <StatusBadge tone={isDirty ? "warning" : "neutral"}>{isDirty ? "Unsaved changes" : "In sync"}</StatusBadge>
                 </div>
@@ -335,19 +400,29 @@ export function AdminPage() {
                     className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-2.5 text-sm text-slate-900 outline-none transition focus:border-slate-400"
                   />
                 </label>
-                <label className="block text-sm font-medium text-slate-700">
-                  Knowledge base URL
-                  <input
-                    value={knowledgeBaseUrl}
-                    onChange={(event) => setKnowledgeBaseUrl(event.target.value)}
-                    placeholder="https://help.atome.ph/hc/en-gb/categories/..."
-                    className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-2.5 text-sm text-slate-900 outline-none transition focus:border-slate-400"
-                  />
-                </label>
+                {generatedAgent ? (
+                  <div className="rounded-[18px] border border-orange-200 bg-orange-50 px-4 py-3 text-sm leading-6 text-orange-900">
+                    This generated agent is upload-only. Knowledge base URLs and live source sync are disabled.
+                  </div>
+                ) : (
+                  <label className="block text-sm font-medium text-slate-700">
+                    Knowledge base URL
+                    <input
+                      value={knowledgeBaseUrl}
+                      onChange={(event) => setKnowledgeBaseUrl(event.target.value)}
+                      placeholder="https://help.atome.ph/hc/en-gb/categories/..."
+                      className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-2.5 text-sm text-slate-900 outline-none transition focus:border-slate-400"
+                    />
+                  </label>
+                )}
 
                 <div>
                   <p className="text-sm font-medium text-slate-700">Upload knowledge documents</p>
-                  <p className="mt-0.5 text-[11px] leading-4 text-slate-500">PDF, DOCX, or TXT files that supplement the KB URL.</p>
+                  <p className="mt-0.5 text-[11px] leading-4 text-slate-500">
+                    {generatedAgent
+                      ? "PDF, DOCX, or TXT files are the only supported knowledge source for generated agents."
+                      : "PDF, DOCX, or TXT files that supplement the KB URL."}
+                  </p>
                   <div
                     onDragOver={(event: DragEvent<HTMLDivElement>) => { event.preventDefault(); setDragActive(true); }}
                     onDragLeave={() => setDragActive(false)}
@@ -412,14 +487,16 @@ export function AdminPage() {
                   >
                     {publishMutation.isPending ? "Publishing..." : "Publish revision"}
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => syncMutation.mutate()}
-                    disabled={!selectedAgentId || syncMutation.isPending}
-                    className="rounded-full border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-                  >
-                    {syncMutation.isPending ? "Syncing..." : "Sync sources"}
-                  </button>
+                  {generatedAgent ? null : (
+                    <button
+                      type="button"
+                      onClick={() => syncMutation.mutate()}
+                      disabled={!selectedAgentId || syncMutation.isPending}
+                      className="rounded-full border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                    >
+                      {syncMutation.isPending ? "Syncing..." : "Sync sources"}
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => uploadMutation.mutate()}
@@ -471,12 +548,19 @@ export function AdminPage() {
                   </div>
                 </div>
 
-                <div className="rounded-[18px] border border-slate-200 bg-white px-3 py-2.5">
-                  <p className="font-mono text-[10px] uppercase tracking-[0.26em] text-slate-500">Current KB URL</p>
-                  <p className="mt-2 break-all text-xs leading-5 text-slate-600">
-                    {selectedAgent.knowledge_base_url ?? "No knowledge base URL configured."}
-                  </p>
-                </div>
+                {generatedAgent ? (
+                  <div className="rounded-[18px] border border-slate-200 bg-white px-3 py-2.5">
+                    <p className="font-mono text-[10px] uppercase tracking-[0.26em] text-slate-500">Source mode</p>
+                    <p className="mt-2 text-xs leading-5 text-slate-600">Uploaded documents only</p>
+                  </div>
+                ) : (
+                  <div className="rounded-[18px] border border-slate-200 bg-white px-3 py-2.5">
+                    <p className="font-mono text-[10px] uppercase tracking-[0.26em] text-slate-500">Current KB URL</p>
+                    <p className="mt-2 break-all text-xs leading-5 text-slate-600">
+                      {selectedAgent.knowledge_base_url ?? "No knowledge base URL configured."}
+                    </p>
+                  </div>
+                )}
               </Card>
             </div>
           </div>
@@ -484,7 +568,7 @@ export function AdminPage() {
           <div className="flex min-h-0 flex-1 flex-col space-y-3 overflow-hidden">
             <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
               <div className="flex flex-wrap gap-2">
-                {(["open", "archived", "all"] as StatusFilter[]).map((filterValue) => (
+                {(["open", "review", "resolved", "all"] as StatusFilter[]).map((filterValue) => (
                   <button
                     key={filterValue}
                     type="button"
@@ -496,7 +580,13 @@ export function AdminPage() {
                         : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50",
                     )}
                   >
-                    {filterValue === "open" ? "Open queue" : filterValue === "archived" ? "Archived" : "All"}
+                    {filterValue === "open"
+                      ? "Open queue"
+                      : filterValue === "review"
+                        ? "Needs review"
+                        : filterValue === "resolved"
+                          ? "Resolved"
+                          : "All"}
                   </button>
                 ))}
               </div>
@@ -517,7 +607,9 @@ export function AdminPage() {
               <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
                 {issues.map((issue) => {
                   const expanded = expandedIssueId === issue.id;
-                  const isFixedIssue = issue.status === "archived" || issue.latest_fix_attempt?.replay_passed === true;
+                  const isResolvedIssue =
+                    issue.status === "archived" || issue.status === "published" || issue.status === "rejected";
+                  const needsReview = issue.status === "validated_pending_review";
                   return (
                     <Card key={issue.id} className="space-y-3 p-4">
                       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -537,7 +629,26 @@ export function AdminPage() {
                           >
                             {expanded ? "Hide details" : "View details"}
                           </button>
-                          {!isFixedIssue ? (
+                          {needsReview ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => approveFixMutation.mutate(issue.id)}
+                                disabled={approveFixMutation.isPending && approveFixMutation.variables === issue.id}
+                                className="rounded-full bg-slate-950 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800"
+                              >
+                                {approveFixMutation.isPending && approveFixMutation.variables === issue.id ? "Publishing..." : "Approve and publish"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => rejectFixMutation.mutate(issue.id)}
+                                disabled={rejectFixMutation.isPending && rejectFixMutation.variables === issue.id}
+                                className="rounded-full border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-semibold text-red-700 transition hover:bg-red-100"
+                              >
+                                {rejectFixMutation.isPending && rejectFixMutation.variables === issue.id ? "Rejecting..." : "Reject"}
+                              </button>
+                            </>
+                          ) : !isResolvedIssue ? (
                             <button
                               type="button"
                               onClick={() => autoFixMutation.mutate(issue.id)}
@@ -547,7 +658,9 @@ export function AdminPage() {
                               {autoFixMutation.isPending && autoFixMutation.variables === issue.id ? "Running..." : "Auto-fix"}
                             </button>
                           ) : (
-                            <StatusBadge tone="success">Fixed</StatusBadge>
+                            <StatusBadge tone={issue.status === "rejected" ? "danger" : "success"}>
+                              {issue.status === "rejected" ? "Rejected" : "Fixed"}
+                            </StatusBadge>
                           )}
                         </div>
                       </div>
@@ -581,7 +694,10 @@ export function AdminPage() {
                                   <span className="font-semibold text-slate-900">Auto published:</span>{" "}
                                   {issue.latest_fix_attempt.auto_published ? "Yes" : "No"}
                                 </p>
-                                <p className="text-slate-600">{issue.latest_fix_attempt.patch_summary}</p>
+                                <p>
+                                  <span className="font-semibold text-slate-900">Proposed fix summary:</span>{" "}
+                                  {issue.latest_fix_attempt.patch_summary}
+                                </p>
                               </div>
                             ) : (
                               <p className="mt-3 text-sm leading-6 text-slate-600">No auto-fix attempt recorded yet.</p>

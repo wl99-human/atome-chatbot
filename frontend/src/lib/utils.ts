@@ -34,7 +34,16 @@ export function formatFileSize(bytes: number) {
 }
 
 export function getIssueStatusTone(status: string) {
-  return status === "archived" ? "success" : "warning";
+  if (status === "archived" || status === "published") {
+    return "success";
+  }
+  if (status === "validated_pending_review") {
+    return "accent";
+  }
+  if (status === "rejected") {
+    return "danger";
+  }
+  return "warning";
 }
 
 export function getSyncTone(syncMode: string, fallbackUsed: boolean) {
@@ -55,6 +64,13 @@ export function describePendingAction(pendingAction?: string | null) {
     return "Waiting for a transaction ID so the bot can check the failed payment.";
   }
   return "";
+}
+
+export function getDraftStatusTone(status: string) {
+  if (status === "ready_to_generate" || status === "generated") {
+    return "success";
+  }
+  return "warning";
 }
 
 export function mergeFiles(currentFiles: File[], nextFiles: File[]) {

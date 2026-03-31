@@ -83,6 +83,32 @@ class SourceService:
             "and route case-specific account questions into the correct tools."
         )
 
+    def build_instruction_bundle(
+        self,
+        *,
+        behavior_instructions: str = "",
+        response_style: str = "",
+        allowed_scope: str = "",
+        fallback_behavior: str = "",
+    ) -> dict[str, str]:
+        normalized_behavior = normalize_whitespace(behavior_instructions)
+        normalized_style = normalize_whitespace(response_style) or (
+            "Be friendly, concise, and practical."
+        )
+        normalized_scope = normalize_whitespace(allowed_scope) or (
+            "Answer only from the uploaded or synced knowledge sources."
+        )
+        normalized_fallback = normalize_whitespace(fallback_behavior) or (
+            "If the answer is not supported by the current knowledge, say that clearly."
+        )
+        return {
+            "behavior_instructions": normalized_behavior,
+            "response_style": normalized_style,
+            "allowed_scope": normalized_scope,
+            "fallback_behavior": normalized_fallback,
+            "citation_policy": "Use inline citations that match the retrieved sources.",
+        }
+
     def _extract_help_center_config(self, category_url: str) -> tuple[str, str]:
         parsed = urlparse(category_url)
         path_parts = [part for part in parsed.path.split("/") if part]
@@ -478,6 +504,18 @@ class SourceService:
                 "chunks_synced": len(FALLBACK_KNOWLEDGE),
                 "last_sync_warning": "Seeded with fallback knowledge until a live KB sync is run.",
                 "last_sync_source_url": settings.default_kb_url,
+                "instruction_bundle": self.build_instruction_bundle(
+                    behavior_instructions=(
+                        "If a customer asks for their own card application status, ask for an application reference if missing and then call the application-status tool. "
+                        "If a customer asks about their own failed card transaction, ask for a transaction ID if missing and then call the transaction-status tool. "
+                        "For general informational questions, answer only from verified knowledge-base content with citations."
+                    ),
+                    response_style="Be clear and concise.",
+                    allowed_scope=(
+                        "Use verified knowledge for FAQ answers and the built-in lookup workflows for supported account-specific requests."
+                    ),
+                    fallback_behavior="If the answer is not supported by the current knowledge, say that clearly.",
+                ),
             },
         )
         db.add(revision)

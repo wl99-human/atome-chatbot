@@ -74,10 +74,13 @@ class GeminiService:
         user_message: str,
         history: list[dict[str, str]],
         context_blocks: list[dict[str, str]],
+        agent_name: str = "customer service assistant",
+        instruction_bundle: dict[str, str] | None = None,
     ) -> str | None:
         if not self.enabled:
             return None
 
+        instruction_bundle = dict(instruction_bundle or {})
         history_text = "\n".join(
             f"{item['role'].upper()}: {item['content']}" for item in history[-6:]
         )
@@ -87,11 +90,21 @@ class GeminiService:
             f"{item['content']}"
             for item in context_blocks
         )
+        instruction_text = "\n".join(
+            [
+                f"Behavior instructions: {instruction_bundle.get('behavior_instructions') or 'Answer only from verified knowledge.'}",
+                f"Response style: {instruction_bundle.get('response_style') or 'Be friendly and concise.'}",
+                f"Allowed scope: {instruction_bundle.get('allowed_scope') or 'Use only the supplied knowledge sources.'}",
+                f"Fallback behavior: {instruction_bundle.get('fallback_behavior') or 'Say clearly when the answer is not supported.'}",
+                f"Citation policy: {instruction_bundle.get('citation_policy') or 'Use inline citations like [1].'}",
+            ]
+        )
         prompt = f"""
-You are a careful customer service assistant answering a general knowledge-base question.
+You are {agent_name}, a careful customer service assistant answering a general knowledge-base question.
 
 Rules:
-- Answer only from the supplied sources.
+- Follow the instruction bundle first.
+- Answer only from the supplied sources for factual claims.
 - If a source is marked as a correction, treat it as authoritative guidance that fixes an earlier incomplete answer.
 - Integrate correction facts naturally into the answer instead of repeating instruction phrasing like "please mention that".
 - If the answer is not fully supported, say so clearly.
@@ -99,6 +112,9 @@ Rules:
 - Do not invent policies, timelines, or account outcomes.
 - Do not ask for an application reference number or transaction ID unless the user is explicitly asking for a personal account lookup.
 - Do not turn a general FAQ answer into a tool workflow.
+
+Instruction bundle:
+{instruction_text}
 
 Conversation history:
 {history_text or "No prior history."}
@@ -110,6 +126,51 @@ User message:
 {user_message}
 """.strip()
         return self._call_model(prompt, temperature=0.2)
+
+    def plan_meta_agent_turn(
+        self,
+        *,
+        current_draft: dict[str, Any],
+        document_summaries: list[str],
+        history: list[dict[str, str]],
+        manager_message: str,
+    ) -> dict[str, Any]:
+        default = {
+            "assistant_reply": "",
+            "draft_spec": {},
+        }
+        prompt = f"""
+Return JSON with keys assistant_reply and draft_spec.
+
+draft_spec must be an object with these keys when you update them:
+- name
+- description
+- behavior_instructions
+- response_style
+- allowed_scope
+- fallback_behavior
+- knowledge_summary
+- open_questions
+- status
+
+Keep the draft grounded in the manager request and uploaded docs.
+Do not invent product knowledge not present in the docs or chat.
+Ask concise follow-up questions only when fields are still missing.
+Set status to ready_to_generate only when the draft is specific enough to create an agent.
+
+Current draft:
+{json.dumps(current_draft, ensure_ascii=True)}
+
+Uploaded document summaries:
+{chr(10).join(document_summaries[:8]) or "No uploaded docs yet."}
+
+Recent history:
+{chr(10).join(f"{item['role']}: {item['content']}" for item in history[-8:]) or "No prior history."}
+
+Latest manager message:
+{manager_message}
+""".strip()
+        return self.generate_json(prompt, default)
 
     def classify_personal_request(self, message: str) -> dict[str, str]:
         default = {"intent": "unknown", "reason": "No model available."}

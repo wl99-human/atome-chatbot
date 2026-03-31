@@ -59,6 +59,7 @@ export function AppShell() {
     }
     const next = new URLSearchParams(searchText);
     next.set("agent", selectedAgentId);
+    next.delete("conversation");
     setSearchParams(next, { replace: true });
   }, [requestedAgentId, searchText, selectedAgentId, setSearchParams]);
 
@@ -68,6 +69,9 @@ export function AppShell() {
       next.set("agent", agentId);
     } else {
       next.delete("agent");
+    }
+    if (agentId !== requestedAgentId) {
+      next.delete("conversation");
     }
     setSearchParams(next, { replace: true });
   }

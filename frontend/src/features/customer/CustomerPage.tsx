@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
-import { reportIssue, sendChat } from "../../api/client";
+import { fetchConversation, reportIssue, sendChat } from "../../api/client";
 import { Card } from "../../components/ui/Card";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { InlineAlert } from "../../components/ui/InlineAlert";
@@ -11,7 +11,7 @@ import { useToast } from "../../components/ui/ToastProvider";
 import { useAutosizeTextarea } from "../../hooks/useAutosizeTextarea";
 import { useAppShell } from "../../layout/AppShell";
 import { classNames, describePendingAction, getSyncTone } from "../../lib/utils";
-import type { ChatResponse, UIMessage } from "../../types/api";
+import type { ChatResponse, ConversationDetail, UIMessage } from "../../types/api";
 
 type StoredChatSession = {
   conversationId: string | null;
@@ -69,27 +69,43 @@ function buildInitialChatSession(agentName?: string, agentRole?: string): Stored
   };
 }
 
-function getChatStorageKey(agentId?: string, revisionId?: string | null) {
+function getChatStorageKey(agentId?: string) {
   if (!agentId) {
     return null;
   }
-  return `customer-chat:${agentId}:${revisionId ?? "no-revision"}`;
+  return `customer-chat:${agentId}`;
+}
+
+function getLegacyChatStorageKeys(agentId?: string, revisionId?: string | null) {
+  if (!agentId) {
+    return [];
+  }
+  return [
+    `customer-chat:${agentId}:${revisionId ?? "no-revision"}`,
+    `customer-chat:${agentId}:no-revision`,
+  ];
 }
 
 function loadStoredChatSession(
   storageKey: string | null,
+  legacyKeys: string[],
   agentName?: string,
   agentRole?: string,
-): StoredChatSession {
+): StoredChatSession & { loadedFromKey: string | null } {
   const fallback = buildInitialChatSession(agentName, agentRole);
   if (!storageKey || typeof window === "undefined") {
-    return fallback;
+    return { ...fallback, loadedFromKey: null };
   }
 
   try {
-    const raw = window.localStorage.getItem(storageKey);
+    const candidateKeys = [storageKey, ...legacyKeys.filter((key) => key !== storageKey)];
+    const resolvedKey = candidateKeys.find((key) => window.localStorage.getItem(key));
+    if (!resolvedKey) {
+      return { ...fallback, loadedFromKey: null };
+    }
+    const raw = window.localStorage.getItem(resolvedKey);
     if (!raw) {
-      return fallback;
+      return { ...fallback, loadedFromKey: null };
     }
     const parsed = JSON.parse(raw) as Partial<StoredChatSession>;
     return {
@@ -97,18 +113,33 @@ function loadStoredChatSession(
       messages: Array.isArray(parsed.messages) && parsed.messages.length ? parsed.messages : fallback.messages,
       chatInput: typeof parsed.chatInput === "string" ? parsed.chatInput : "",
       pendingAction: typeof parsed.pendingAction === "string" ? parsed.pendingAction : null,
+      loadedFromKey: resolvedKey,
     };
   } catch {
-    return fallback;
+    return { ...fallback, loadedFromKey: null };
   }
+}
+
+function mapConversationToUiMessages(conversation: ConversationDetail): UIMessage[] {
+  return conversation.messages.map((message) => ({
+    id: message.id,
+    role: message.role,
+    content: message.content,
+    citations: message.citations,
+    assistantMessageId: message.role === "assistant" ? message.id : undefined,
+  }));
 }
 
 export function CustomerPage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const { showToast } = useToast();
   const { selectedAgent, selectedAgentId } = useAppShell();
-  const chatStorageKey = getChatStorageKey(selectedAgent?.id, selectedAgent?.active_revision_id);
+  const requestedConversationId = searchParams.get("conversation") ?? "";
+  const chatStorageKey = getChatStorageKey(selectedAgent?.id);
+  const legacyChatStorageKeys = getLegacyChatStorageKeys(selectedAgent?.id, selectedAgent?.active_revision_id);
+  const legacyChatStorageKeySignature = legacyChatStorageKeys.join("|");
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<UIMessage[]>(buildWelcomeMessage(selectedAgent?.name, selectedAgent?.role));
   const [chatInput, setChatInput] = useState("");
@@ -121,13 +152,86 @@ export function CustomerPage() {
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useAutosizeTextarea<HTMLTextAreaElement>(chatInput);
 
+  function syncConversationSearchParam(nextConversationId: string | null) {
+    const next = new URLSearchParams(searchParams.toString());
+    if (nextConversationId) {
+      next.set("conversation", nextConversationId);
+    } else {
+      next.delete("conversation");
+    }
+    setSearchParams(next, { replace: true });
+  }
+
+  const conversationQuery = useQuery({
+    queryKey: ["conversation", requestedConversationId],
+    queryFn: () => fetchConversation(requestedConversationId),
+    enabled: Boolean(requestedConversationId),
+  });
+
   useEffect(() => {
-    const storedSession = loadStoredChatSession(chatStorageKey, selectedAgent?.name, selectedAgent?.role);
+    if (requestedConversationId) {
+      return;
+    }
+    const storedSession = loadStoredChatSession(
+      chatStorageKey,
+      legacyChatStorageKeys,
+      selectedAgent?.name,
+      selectedAgent?.role,
+    );
     setConversationId(storedSession.conversationId);
     setPendingAction(storedSession.pendingAction);
     setChatInput(storedSession.chatInput);
     setMessages(storedSession.messages);
-  }, [chatStorageKey, selectedAgent?.name, selectedAgent?.role]);
+    if (storedSession.conversationId) {
+      syncConversationSearchParam(storedSession.conversationId);
+    }
+    if (
+      chatStorageKey &&
+      storedSession.loadedFromKey &&
+      storedSession.loadedFromKey !== chatStorageKey &&
+      typeof window !== "undefined"
+    ) {
+      window.localStorage.setItem(
+        chatStorageKey,
+        JSON.stringify({
+          conversationId: storedSession.conversationId,
+          messages: storedSession.messages,
+          chatInput: storedSession.chatInput,
+          pendingAction: storedSession.pendingAction,
+        } satisfies StoredChatSession),
+      );
+    }
+  }, [chatStorageKey, legacyChatStorageKeySignature, requestedConversationId, selectedAgent?.name, selectedAgent?.role]);
+
+  useEffect(() => {
+    if (!conversationQuery.data) {
+      return;
+    }
+    if (selectedAgentId && conversationQuery.data.agent_id !== selectedAgentId) {
+      const storedSession = loadStoredChatSession(
+        chatStorageKey,
+        legacyChatStorageKeys,
+        selectedAgent?.name,
+        selectedAgent?.role,
+      );
+      setConversationId(storedSession.conversationId);
+      setPendingAction(storedSession.pendingAction);
+      setChatInput(storedSession.chatInput);
+      setMessages(storedSession.messages);
+      syncConversationSearchParam(null);
+      return;
+    }
+    setConversationId(conversationQuery.data.id);
+    setPendingAction(conversationQuery.data.pending_action ?? null);
+    setMessages(mapConversationToUiMessages(conversationQuery.data));
+  }, [chatStorageKey, conversationQuery.data, legacyChatStorageKeySignature, selectedAgent?.name, selectedAgent?.role, selectedAgentId]);
+
+  useEffect(() => {
+    if (!requestedConversationId || !conversationQuery.isError) {
+      return;
+    }
+    syncConversationSearchParam(null);
+  }, [conversationQuery.isError, requestedConversationId]);
 
   useEffect(() => {
     if (!chatStorageKey || typeof window === "undefined") {
@@ -161,6 +265,7 @@ export function CustomerPage() {
     onSuccess: (response: ChatResponse) => {
       setConversationId(response.conversation_id);
       setPendingAction(response.conversation.pending_action ?? null);
+      syncConversationSearchParam(response.conversation_id);
       setMessages((current) => [
         ...current,
         {
@@ -251,9 +356,13 @@ export function CustomerPage() {
 
   function resetConversation() {
     const freshSession = buildInitialChatSession(selectedAgent?.name, selectedAgent?.role);
-    if (chatStorageKey && typeof window !== "undefined") {
-      window.localStorage.removeItem(chatStorageKey);
+    if (typeof window !== "undefined") {
+      if (chatStorageKey) {
+        window.localStorage.removeItem(chatStorageKey);
+      }
+      legacyChatStorageKeys.forEach((key) => window.localStorage.removeItem(key));
     }
+    syncConversationSearchParam(null);
     setConversationId(freshSession.conversationId);
     setPendingAction(freshSession.pendingAction);
     setChatInput(freshSession.chatInput);
@@ -477,7 +586,12 @@ export function CustomerPage() {
             <div className="flex flex-wrap gap-3">
               <button
                 type="button"
-                onClick={() => navigate({ pathname: "/admin", search: `?agent=${selectedAgentId}&panel=issues` })}
+                onClick={() => {
+                  const next = new URLSearchParams(searchParams.toString());
+                  next.set("agent", selectedAgentId);
+                  next.set("panel", "issues");
+                  navigate({ pathname: "/admin", search: `?${next.toString()}` });
+                }}
                 className="rounded-full bg-slate-950 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800"
               >
                 Open admin queue
