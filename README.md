@@ -1,4 +1,4 @@
-# Atome Customer Service Bot Interview Project
+# Atome Customer Service Bot
 
 This repo implements a Python-first customer service bot plus a manager-facing meta-agent builder.
 
@@ -123,4 +123,4 @@ This implementation was built with AI assistance using Gemini models (Gemini 2.5
 ## Notes
 - If `GEMINI_API_KEY` is missing, the app still runs with deterministic fallback behavior for retrieval answers and mock tool flows.
 - The default support agent seeds fallback Atome knowledge locally, then can re-sync from the live Atome help center URL.
-- The lookup tools are mocked by design for interview purposes.
+- The lookup tools are mocked by design for demonstration purposes.

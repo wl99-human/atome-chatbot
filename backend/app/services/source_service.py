@@ -73,7 +73,7 @@ class SourceService:
     def __init__(self) -> None:
         self.session = requests.Session()
         self.session.headers.update(
-            {"User-Agent": "atome-chatbot-interview-demo/1.0 (+https://help.atome.ph)"}
+            {"User-Agent": "atome-chatbot-demo/1.0 (+https://help.atome.ph)"}
         )
 
     def build_system_prompt(self, agent_name: str) -> str:
